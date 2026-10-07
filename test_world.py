@@ -259,5 +259,137 @@ class TestMultiCityEnvironment:
         )
 
 
+class TestRealismMechanics:
+    """Tests for realism mechanics: overcrowding, contamination,
+    deprivation damage, fuel logistics, and report tracking"""
+
+    def test_overcrowding_increases_deaths(self):
+        """Hospitals above 90% occupancy have elevated mortality"""
+        config = WorldConfig(n_cities=1, hospitals_per_city=1, seed=42)
+        env = DisasterEnvironment(world_config=config, seed=42)
+        hospital = env.hospitals[0]
+
+        np.random.seed(42)
+        hospital.current_patients = hospital.bed_capacity // 2
+        hospital.allocate_resources(0, 0)  # starve so base death prob > 0
+        deaths_normal = sum(hospital.simulate_step()["deceased"] for _ in range(50))
+
+        np.random.seed(42)
+        hospital.current_patients = hospital.bed_capacity  # full = overcrowded
+        hospital.allocate_resources(0, 0)
+        deaths_crowded = sum(hospital.simulate_step()["deceased"] for _ in range(50))
+
+        assert deaths_crowded > deaths_normal
+
+    def test_contamination_increases_deaths(self):
+        """Contaminated water supply causes infections"""
+        config = WorldConfig(n_cities=1, hospitals_per_city=1, seed=42)
+        env = DisasterEnvironment(world_config=config, seed=42)
+        hospital = env.hospitals[0]
+        hospital.allocate_resources(0, 0)
+
+        np.random.seed(42)
+        patients0 = hospital.current_patients
+        clean = sum(hospital.simulate_step(contamination=0.0)["deceased"] for _ in range(100))
+
+        np.random.seed(42)
+        hospital.current_patients = patients0
+        dirty = sum(hospital.simulate_step(contamination=0.9)["deceased"] for _ in range(100))
+
+        assert dirty > clean
+
+    def test_deprivation_damage(self):
+        """Resource-starved facilities take damage over time"""
+        config = WorldConfig(n_cities=1, hospitals_per_city=1, seed=42,
+                             delivery_delay_steps=6)
+        env = DisasterEnvironment(world_config=config, seed=42)
+        hospital = env.hospitals[0]
+        hospital.water_received = 0
+        hospital.power_received = 0
+        hospital.repair_rate = 0  # isolate deprivation from passive repair
+        before = hospital.damage_level
+
+        env.step(0)
+
+        assert hospital.damage_level > before
+
+    def test_deprivation_slower_than_repair(self):
+        """Deprivation only slows recovery; passive repair still dominates"""
+        config = WorldConfig(n_cities=1, hospitals_per_city=1, seed=42,
+                             delivery_delay_steps=6)
+        env = DisasterEnvironment(world_config=config, seed=42)
+        hospital = env.hospitals[0]
+        hospital.water_received = 0
+        hospital.power_received = 0
+        before = hospital.damage_level
+
+        env.step(0)
+
+        # Net damage still decreases because repair (0.05) > deprivation (0.005)
+        assert hospital.damage_level < before
+
+    def test_fuel_depletes_without_aid(self):
+        """Passive refuel is below consumption, so fuel drains slowly"""
+        config = WorldConfig(n_cities=1, seed=42)
+        env = DisasterEnvironment(world_config=config, seed=42)
+        station = env.power_stations[0]
+        before = station.fuel_level
+
+        for _ in range(5):
+            env.step(0)
+
+        assert station.fuel_level < before
+
+    def test_aid_convoy_delivers_fuel(self):
+        """Aid convoys refuel power stations on arrival"""
+        config = WorldConfig(n_cities=2, magnitude=8, seed=42,
+                             inter_city_transfer_delay=2)
+        env = DisasterEnvironment(world_config=config, seed=42)
+        target = env._most_damaged_city()
+        for s in target.power_stations:
+            s.fuel_level = 0.3
+
+        env.aid_convoys.append({
+            "due": env.time_step, "target": target.id,
+            "water": 100, "medical": 10, "fuel": OPS_CONFIG["aid_fuel_units"],
+        })
+        env._deliver_due_aid()
+
+        for s in target.power_stations:
+            assert s.fuel_level == pytest.approx(0.3 + OPS_CONFIG["aid_fuel_units"])
+        assert env.aid_delivered["convoys"] == 1
+        assert env.aid_delivered["fuel"] > 0
+
+    def test_deaths_by_cause_sums_to_total(self):
+        """Death accounting is consistent"""
+        env = DisasterEnvironment(world_config=WorldConfig(n_cities=2, magnitude=7, seed=42), seed=42)
+        for _ in range(20):
+            env.step(0)
+        assert sum(env.deaths_by_cause.values()) == env.total_deaths
+        assert sum(env.deaths_by_city.values()) == env.total_deaths
+
+    def test_episode_report_structure(self):
+        """After-action report has all sections"""
+        env = DisasterEnvironment(world_config=WorldConfig(n_cities=2, seed=42), seed=42)
+        for _ in range(5):
+            env.step(env.encode_action(0, 0, OPS_CONFIG["operations"].index("send_aid")))
+
+        report = env.get_episode_report()
+        for key in ["scenario", "magnitude", "n_cities", "total_deaths",
+                    "deaths_by_cause", "per_city", "total_evacuated",
+                    "aid_delivered", "resources", "history"]:
+            assert key in report
+        assert len(report["per_city"]) == 2
+        assert set(report["deaths_by_cause"].keys()) == {"hospital", "venue", "at_home"}
+        assert 0.0 <= report["resources"]["utilization"] <= 1.0
+        assert report["resources"]["power_generated"] > 0
+
+    def test_metrics_expose_report(self):
+        """get_metrics includes the report section"""
+        env = DisasterEnvironment(seed=42)
+        env.step(0)
+        assert "report" in env.get_metrics()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
