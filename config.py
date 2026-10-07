@@ -6,7 +6,7 @@ Configuration settings for Disaster Management Simulation
 SIMULATION_CONFIG = {
     "episode_duration_hours": 26,
     "time_step_minutes": 30,
-    "max_episodes": 50,
+    "max_episodes": 200,
     "random_seed": 42
 }
 
@@ -87,6 +87,45 @@ VIS_CONFIG = {
     "update_interval_ms": 500,
     "plot_history_length": 100,
     "dashboard_port": 8050,
+}
+
+# World Generation Ranges (procedural infrastructure generation)
+# Capacities scale linearly with city population (reference: 10,000 people)
+GENERATION_CONFIG = {
+    "hospital_beds_range": (100, 200),
+    "hospital_occupancy_ratio": 0.5,
+    "hospital_water_req_range": (100, 200),
+    "hospital_power_req_range": (500, 1000),
+    "hospital_discharge_rate": 5,
+    "power_capacity_range": (1500, 2500),
+    "power_initial_damage_range": (0.1, 0.3),
+    "power_repair_rate": 0.05,
+    "water_capacity_range": (400, 600),
+    "water_initial_damage_range": (0.1, 0.3),
+    "water_repair_rate": 0.04,
+    "venue_capacity_range": (150, 250),
+    "venue_water_req_range": (40, 60),
+    "venue_power_req_range": (150, 250),
+    "venue_initial_shelter_ratio": 0.05,  # fraction of population initially in shelters
+}
+
+# Operations dimension of the action space
+OPS_CONFIG = {
+    "operations": [
+        "repair_power",
+        "repair_water",
+        "repair_hospitals",
+        "evacuate",
+        "send_aid",
+        "none",
+    ],
+    "repair_boost": 0.05,       # extra repair per crew per step
+    "evacuation_batch": 100,    # people moved per evacuate operation
+    "aid_water_units": 300,     # water delivered per aid convoy
+    "aid_medical_kits": 50,     # medical kits per convoy (1 kit treats 0.2 patients)
+    "migration_rate": 0.005,    # voluntary per-step migration out of heavily damaged cities
+    "migration_damage_threshold": 0.4,
+    "home_casualty_factor": 0.0005,  # per-step at-home casualty probability per unit damage
 }
 
 # Disaster Scenarios
