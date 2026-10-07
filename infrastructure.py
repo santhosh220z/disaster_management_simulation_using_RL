@@ -141,9 +141,12 @@ class PowerStation(Infrastructure):
     current_output: float = 0.0
     fuel_level: float = 1.0  # 0-1
     fuel_consumption_rate: float = 0.01
-    
+    outage: bool = False  # Temporary outage (e.g. hurricane grid failure)
+
     def get_available_power(self) -> float:
         """Get available power output"""
+        if self.outage:
+            return 0.0
         return self.total_capacity * self.get_efficiency() * self.fuel_level
     
     def generate_power(self) -> float:
@@ -260,20 +263,26 @@ class PublicVenue(Infrastructure):
         self.water_received = water
         self.power_received = power
     
-    def simulate_step(self) -> Dict[str, int]:
-        """Simulate one time step"""
+    def simulate_step(self, casualty_bonus: float = 0.0, arrival_bonus: float = 0.0) -> Dict[str, int]:
+        """Simulate one time step
+
+        Args:
+            casualty_bonus: Additional casualty probability (e.g. industrial accidents)
+            arrival_bonus: Additional expected evacuee arrivals (e.g. mandatory evacuation)
+        """
         resource_level = self.get_resource_satisfaction()
-        
+
         # Casualties from poor conditions
-        casualty_prob = max(0, (0.3 - resource_level) * 0.02 * (1 + self.damage_level))
+        casualty_prob = max(0, (0.3 - resource_level) * 0.02 * (1 + self.damage_level)) + casualty_bonus
+        casualty_prob = min(1.0, casualty_prob)
         new_casualties = int(np.random.binomial(self.current_population, casualty_prob))
         self.current_population -= new_casualties
         self.casualties += new_casualties
-        
+
         # New evacuees arriving
-        new_arrivals = int(np.random.poisson(5))
+        new_arrivals = int(np.random.poisson(5 + arrival_bonus))
         self.current_population = min(self.population_capacity, self.current_population + new_arrivals)
-        
+
         return {"casualties": new_casualties, "new_arrivals": new_arrivals}
 
 
@@ -283,14 +292,14 @@ class DisasterEvent:
     name: str
     severity: float = 1.0  # Multiplier for damage
     duration_hours: int = 24
-    current_hour: int = 0
+    current_hour: float = 0.0
     is_active: bool = True
     aftershock_probability: float = 0.0
     ongoing_damage_rate: float = 0.0
-    
-    def tick(self) -> bool:
+
+    def tick(self, hours_per_step: float = 1.0) -> bool:
         """Advance disaster timeline, return True if still active"""
-        self.current_hour += 1
+        self.current_hour += hours_per_step
         if self.current_hour >= self.duration_hours:
             self.is_active = False
         return self.is_active
