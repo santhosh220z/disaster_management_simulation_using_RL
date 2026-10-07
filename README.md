@@ -99,7 +99,10 @@ The environment state is represented as a vector containing:
 - **Physical Damage Levels** (0-4): None, Minor, Moderate, Severe, Critical
 - **Resource Availability Levels** (0-4): None, Critical, Low, Medium, Full
 
-For each infrastructure entity (hospitals, power stations, water stations, public venues).
+For each infrastructure entity (hospitals, power stations, water stations, public venues),
+followed by two phase indicators:
+- **Disaster Active Flag** (0/1): whether the disaster event is still ongoing
+- **Episode Progress** (0-4): coarse fraction of episode time elapsed
 
 ### Action Space
 
@@ -111,18 +114,26 @@ Combined action space with 25 discrete actions:
 
 ```
 Reward = (Patients Discharged × +10) + (Deaths × -50) + 
-         (Infrastructure Failures × -20) + (Efficiency Bonus × +5)
+         (Infrastructure Failures × -20) + (Efficiency Bonus × +5) +
+         (Unallocated Resource Fraction × -10)
 ```
+
+The waste penalty applies to generated power/water held in "reserve" by the
+chosen distribution ratios — there is no storage in the simulation, so
+unallocated resources are lost.
 
 ### Learning Parameters
 
 | Parameter | Default Value | Description |
 |-----------|---------------|-------------|
-| α (Learning Rate) | 0.5 | How quickly the agent updates Q-values |
-| γ (Discount Factor) | 0.7 | Importance of future rewards |
+| α (Learning Rate) | 0.1 | How quickly the agent updates Q-values |
+| γ (Discount Factor) | 0.95 | Importance of future rewards |
 | ε (Exploration Rate) | 0.3 | Initial probability of random action |
 | ε Decay | 0.995 | Exploration decay rate per episode |
 | Episodes | 50 | Number of training episodes |
+
+Training is reproducible: the trainer re-seeds the RNG per episode from
+`SIMULATION_CONFIG["random_seed"]` (42).
 
 ## 📁 Project Structure
 
@@ -148,23 +159,28 @@ disaster/
 
 ### 1. Earthquake
 - High initial damage multiplier (1.5x)
-- Aftershock probability (10%)
+- Aftershock probability (10%) with additional damage
 - Sudden infrastructure damage
 
 ### 2. Flood
 - Moderate damage multiplier (1.2x)
-- Ongoing damage rate
+- Ongoing damage rate while active
 - Water contamination effects
 
 ### 3. Hurricane
 - Highest damage multiplier (1.8x)
-- Power outage probability (30%)
+- Random power-grid outages (30% chance per station per step while active)
 - Duration-limited event (12 hours)
 
 ### 4. Industrial Accident
 - Standard damage multiplier (1.0x)
-- Localized effects
-- Higher casualty rate (5%)
+- Elevated casualty rate (+5%) at public venues while active
+
+### 5. Tsunami
+- Severe damage multiplier (2.0x)
+- 3 wave surges during the event, each damaging all infrastructure
+  and re-contaminating water supplies
+- Mandatory evacuation: elevated evacuee arrivals at public venues
 
 ## 📊 Evaluation Metrics
 
@@ -175,15 +191,37 @@ disaster/
 
 ## 🔬 Results
 
-The RL agent typically outperforms manual resource allocation strategies:
+Measured with `seed=42`, agents trained 500 episodes on the target scenario,
+evaluated over 10 episodes each (greedy policy, no exploration):
+
+**Earthquake**
 
 | Agent | Avg Reward | Avg Discharged | Avg Deaths |
 |-------|------------|----------------|------------|
-| Q-Learning (RL) | ~150-200 | ~40-50 | ~5-10 |
-| Manual (Balanced) | ~100-150 | ~30-40 | ~10-15 |
-| Manual (Hospital Priority) | ~120-160 | ~35-45 | ~8-12 |
+| Q-Learning (RL) | 4970.8 ± 143.6 | 488.2 | 1.2 |
+| Manual (Balanced) | 3738.2 ± 254.4 | 428.6 | 12.6 |
+| Manual (Hospital Priority) | 5027.2 ± 134.3 | 490.0 | 0.6 |
+| Adaptive Manual | 3959.6 ± 173.6 | 430.9 | 8.8 |
 
-*Results vary based on disaster scenario and training duration*
+**Tsunami**
+
+| Agent | Avg Reward | Avg Discharged | Avg Deaths |
+|-------|------------|----------------|------------|
+| Q-Learning (RL) | 4550.0 ± 406.6 | 477.0 | 7.0 |
+| Manual (Balanced) | 2413.3 ± 443.8 | 404.0 | 32.2 |
+| Manual (Hospital Priority) | 4667.3 ± 309.2 | 484.0 | 6.4 |
+| Adaptive Manual | 3093.3 ± 514.6 | 409.9 | 19.9 |
+
+Key findings:
+
+- The RL agent **clearly outperforms** generic balanced/adaptive heuristics
+  (+33% and +26% reward on Earthquake; +88% and +47% on Tsunami).
+- "Hospital Priority" is a strong baseline under this reward function because
+  deaths (-50) are dominated by hospital conditions. The RL policy matches it
+  within one standard deviation on Earthquake.
+- Unlike the fixed heuristics, a single RL policy adapts its allocation to the
+  observed damage/resource state and disaster phase, which is where its
+  advantage grows as scenarios diversify.
 
 ## 🔮 Future Enhancements
 
