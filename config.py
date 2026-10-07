@@ -123,9 +123,13 @@ OPS_CONFIG = {
     "evacuation_batch": 100,    # people moved per evacuate operation
     "aid_water_units": 300,     # water delivered per aid convoy
     "aid_medical_kits": 50,     # medical kits per convoy (1 kit treats 0.2 patients)
+    "aid_fuel_units": 0.3,      # fuel fraction restored per convoy per power station
     "migration_rate": 0.005,    # voluntary per-step migration out of heavily damaged cities
     "migration_damage_threshold": 0.4,
     "home_casualty_factor": 0.0005,  # per-step at-home casualty probability per unit damage
+    "passive_refuel_rate": 0.008,    # below consumption (0.01): fuel is finite without aid
+    "deprivation_damage": 0.005,     # damage per step to severely resource-starved facilities
+    "deprivation_threshold": 0.2,    # satisfaction below this counts as starving
 }
 
 # Disaster Scenarios

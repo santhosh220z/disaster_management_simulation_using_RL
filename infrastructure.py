@@ -109,20 +109,30 @@ class Hospital(Infrastructure):
         self.water_received = water
         self.power_received = power
     
-    def simulate_step(self) -> Dict[str, int]:
-        """Simulate one time step of hospital operation"""
+    def simulate_step(self, contamination: float = 0.0) -> Dict[str, int]:
+        """Simulate one time step of hospital operation
+
+        Args:
+            contamination: Contamination level (0-1) of the incoming water
+                supply; contaminated water causes infections among patients.
+        """
         efficiency = self.get_efficiency()
         resource_level = self.get_resource_satisfaction()
-        
+
         # Calculate discharge rate based on efficiency and resources
         effective_discharge_rate = self.discharge_rate_optimal * efficiency * resource_level
-        
+
         # Discharge patients (with some randomness)
         discharged = int(np.random.poisson(effective_discharge_rate))
         discharged = min(discharged, self.current_patients)
-        
-        # Calculate deaths based on poor conditions
+
+        # Deaths from poor conditions, worsened by overcrowding
+        # (mortality rises sharply above 90% bed occupancy)
+        load = self.current_patients / self.bed_capacity if self.bed_capacity > 0 else 0
+        overcrowd_factor = 1 + max(0.0, load - 0.9) * 5
         death_probability = max(0, (0.5 - resource_level) * 0.1 * (1 + self.damage_level))
+        death_probability = death_probability * overcrowd_factor + contamination * 0.02
+        death_probability = min(1.0, death_probability)
         deaths = int(np.random.binomial(self.current_patients, death_probability))
         deaths = min(deaths, self.current_patients - discharged)
         
