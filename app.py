@@ -285,16 +285,21 @@ def display_simulation_state():
     env = st.session_state.env
     metrics = env.get_metrics()
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    pop = metrics["report"]["population"]
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
         st.metric("⏱️ Time Elapsed", f"{metrics['hours_elapsed']:.1f}h")
     with col2:
-        st.metric("✅ Total Discharged", metrics["total_discharged"])
+        st.metric("👥 Total Population", f"{pop['current']:,}",
+                  delta=f"-{pop['initial'] - pop['current']:,}" if pop['current'] < pop['initial'] else None,
+                  delta_color="inverse")
     with col3:
-        st.metric("❌ Total Deaths", metrics["total_deaths"])
+        st.metric("✅ Total Discharged", metrics["total_discharged"])
     with col4:
-        st.metric("💰 Current Reward", f"{metrics['current_reward']:.1f}")
+        st.metric("❌ Total Deaths", metrics["total_deaths"])
     with col5:
+        st.metric("💰 Current Reward", f"{metrics['current_reward']:.1f}")
+    with col6:
         status = "🔴 Active" if metrics["disaster"]["active"] else "🟢 Ended"
         st.metric("🌪️ Disaster", status)
 
@@ -347,7 +352,7 @@ def display_simulation_state():
         st.divider()
         st.subheader("📊 Performance Charts")
         df = pd.DataFrame(st.session_state.history)
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             fig = px.line(df, x="step", y="reward", title="Reward over Time")
             fig.update_layout(height=280)
@@ -357,8 +362,73 @@ def display_simulation_state():
                           title="Cumulative Outcomes")
             fig.update_layout(height=280)
             st.plotly_chart(fig, width="stretch", key="run_outcomes_chart")
+        with col3:
+            pop_df = pd.DataFrame({
+                "step": env.history["time_steps"],
+                "Total": env.history["total_population"],
+                "Sheltered": env.history["sheltered_population"],
+            })
+            fig = px.line(pop_df, x="step", y=["Total", "Sheltered"],
+                          title="Population")
+            fig.update_layout(height=280)
+            st.plotly_chart(fig, width="stretch", key="run_population_chart")
 
+        display_decision_log(env)
         display_after_action_report(env)
+
+
+def display_decision_log(env: DisasterEnvironment):
+    """Step-by-step record of what the agent did and why"""
+    if not env.action_log:
+        return
+
+    st.divider()
+    st.subheader("🧠 Decision Log")
+
+    agent = st.session_state.agent
+    is_rl = isinstance(agent, QLearningAgent)
+
+    df = pd.DataFrame([{
+        "Step": e["step"],
+        "Action taken": e["description"],
+        "Reward": round(e["reward"], 1),
+        "Discharged": e["discharged"],
+        "Deaths": e["deaths"],
+    } for e in env.action_log])
+    st.dataframe(df, width="stretch", hide_index=True, height=300)
+
+    # Q-value inspector: why did the RL agent choose that action?
+    if is_rl and agent.q_table:
+        with st.expander("🔎 Why did the RL agent choose an action? (Q-value inspector)"):
+            step_choice = st.selectbox(
+                "Inspect step", [e["step"] for e in env.action_log],
+                index=len(env.action_log) - 1,
+            )
+            entry = next(e for e in env.action_log if e["step"] == step_choice)
+            q_values = agent.q_table.get(entry["state"])
+
+            if q_values is None or not np.any(q_values != 0):
+                st.info("This state was never visited during training — "
+                        "all Q-values are zero, so the agent is guessing.")
+            else:
+                top = np.argsort(q_values)[::-1][:3]
+                rows = []
+                for rank, a in enumerate(top, 1):
+                    rows.append({
+                        "Rank": rank,
+                        "Action": env.describe_action(int(a)),
+                        "Q-value": round(float(q_values[a]), 2),
+                        "Chosen": "✅" if int(a) == entry["action"] else "",
+                    })
+                st.markdown(f"**State:** `{entry['state']}`")
+                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    st.download_button(
+        "⬇️ Download decision log (CSV)",
+        df.to_csv(index=False),
+        file_name="decision_log.csv",
+        mime="text/csv",
+    )
 
 
 def display_after_action_report(env: DisasterEnvironment):
