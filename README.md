@@ -18,8 +18,11 @@ This project implements an intelligent decision-support system that learns optim
 - 🎚️ **Full Simulation Control**: Cities, infrastructure counts, population, disaster magnitude (1-10), delivery delays, repair crews — all from the dashboard World Builder
 - 🏥 **Dynamic Population**: Casualties, hospital inflow, evacuee migration, and shelter capacity all scale with city population
 - 🚚 **Operations Actions**: Repair crews, evacuation, and inter-city aid convoys with realistic delivery delays
-- 🧪 **Realistic Dynamics**: Overcrowding raises hospital mortality, contaminated water infects patients, resource-starved facilities degrade, and fuel is finite without aid resupply
+- 🧪 **Realistic Dynamics**: Overcrowding raises hospital mortality, contaminated water infects patients, resource-starved facilities degrade, fuel is finite without aid resupply, road damage slows deliveries, and disaster events injure the at-home population
+- 💊 **Medical Supply Logistics**: Hospitals consume supply kits per discharge; empty stocks slow treatment 70% — aid convoys replenish supplies
 - 🤖 **Q-Learning Agent**: Learns optimal resource allocation policies
+- 🧠 **Decision Log**: Step-by-step narrative of every agent action with a Q-value inspector showing why the RL agent chose each action
+- 👥 **Population Tracking**: Live totals, sheltered vs at-home counts, survival rates
 - 📋 **After-Action Reports**: Deaths by cause, per-city outcomes, aid logistics, resource utilization — exportable as JSON/CSV
 - 📊 **Real-Time Dashboard**: Streamlit world builder, city overview map, per-city monitoring, policy inspector
 - 📈 **Performance Comparison**: Compare RL agent against manual decision-making strategies
@@ -126,18 +129,38 @@ Splash damage decays with distance from the epicenter: `damage / (1 + distance)`
   (slower than passive repair — neglect has a cost, not a death sentence)
 - **Finite fuel**: passive refueling (0.008/step) is slower than consumption
   (0.01/step) — long episodes need aid convoys, which also deliver fuel
-- **Delivery delays**: allocated resources arrive `delivery_delay_steps` later;
-  inter-city aid takes `inter_city_transfer_delay` steps
+- **Medical supplies**: hospitals consume 1 kit per discharge (350 initial,
+  ~0.5/step local restock); an empty stock slows discharges by 70%
+- **Road damage**: delivery delay = `base × (1 + destination damage)` —
+  worse-hit cities wait longer for supplies
+- **Event casualties**: aftershocks and tsunami surges injure the at-home
+  population, not just buildings
+- **Delivery delays**: allocated resources arrive after the (damage-scaled)
+  delay; inter-city aid takes `inter_city_transfer_delay` steps
 
 ### After-Action Reports
 
 Every run produces a detailed report (`env.get_episode_report()`, or the
 dashboard's report section):
 
+- Population: initial vs current totals, sheltered vs at-home, survival rate
 - Deaths by cause (hospitals / venues / at-home) and by city
+- Patients turned away from full hospitals
 - Per-city outcomes: damage, hospital load, fuel, contamination
 - Evacuations performed, people moved, aid convoys delivered
 - Resource generation vs waste and utilization percentage
+- Full decision log with per-step action narratives
+
+### Decision Log
+
+Every step the agent takes is recorded with a human-readable narrative
+(`env.describe_action`), e.g.:
+
+> `Power 60% hospitals / 20% venues / 20% reserve · Water 70% hospitals / 20% venues · Repair crews → power stations in City_2`
+
+The dashboard's Decision Log section shows the full trace, and for RL agents
+a Q-value inspector reveals the top-3 alternative actions the agent weighed
+at any chosen step.
 
 ### State Space
 
@@ -259,29 +282,29 @@ evaluated over 10 episodes each (greedy policy, no exploration):
 
 | Agent | Avg Reward | Avg Discharged | Avg Deaths |
 |-------|------------|----------------|------------|
-| Q-Learning (RL) | 5687.3 ± 300.4 | 607.1 | 10.0 |
-| Manual (Balanced) | 3903.2 ± 598.8 | 480.3 | 16.5 |
-| Manual (Hospital Priority) | 5723.2 ± 590.7 | 612.6 | 10.8 |
-| Adaptive Manual | 6153.5 ± 236.2 | 654.6 | 10.4 |
+| Q-Learning (RL) | 3964.2 ± 767.8 | 546.8 | 31.2 |
+| Manual (Balanced) | 3185.2 ± 921.6 | 478.5 | 30.5 |
+| Manual (Hospital Priority) | 4890.7 ± 743.9 | 605.7 | 26.0 |
+| Adaptive Manual | 5358.0 ± 443.4 | 644.0 | 23.9 |
 
 **3 Cities** (20-dim state)
 
 | Agent | Avg Reward | Avg Discharged | Avg Deaths |
 |-------|------------|----------------|------------|
-| Q-Learning (RL) | 18319.2 ± 570.0 | 1909.4 | 17.9 |
-| Manual (Balanced) | 15709.3 ± 678.1 | 1674.7 | 23.2 |
-| Manual (Hospital Priority) | 19078.9 ± 632.5 | 1992.3 | 20.0 |
-| Adaptive Manual | 20273.2 ± 608.4 | 2090.8 | 15.9 |
+| Q-Learning (RL) | 16576.1 ± 999.2 | 1863.0 | 43.4 |
+| Manual (Balanced) | 14153.8 ± 787.0 | 1663.8 | 52.0 |
+| Manual (Hospital Priority) | 17354.9 ± 837.4 | 1943.4 | 44.6 |
+| Adaptive Manual | 18704.7 ± 504.6 | 2055.0 | 40.0 |
 
 Per-scenario baseline (Adaptive Manual policy, 3 episodes each, magnitude 5):
 
 | Scenario | Avg Reward | Avg Deaths | Avg Discharged |
 |----------|------------|------------|----------------|
-| Earthquake | 6072 | 11.0 | 652.3 |
-| Flood | 5654 | 21.3 | 657.3 |
-| Hurricane | 5278 | 21.3 | 623.7 |
-| Industrial Accident | 1688 | 98.7 | 652.3 |
-| Tsunami | 4413 | 41.7 | 638.7 |
+| Earthquake | 5691 | 16.3 | 641.7 |
+| Flood | 4662 | 38.3 | 643.0 |
+| Hurricane | 3430 | 53.7 | 601.0 |
+| Industrial Accident | 1858 | 93.0 | 641.7 |
+| Tsunami | 3785 | 54.3 | 636.0 |
 
 Key findings:
 
