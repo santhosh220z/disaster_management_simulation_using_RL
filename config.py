@@ -42,12 +42,11 @@ INFRASTRUCTURE_CONFIG = {
 
 # Reinforcement Learning Parameters
 RL_CONFIG = {
-    "learning_rate_alpha": 0.5,
-    "discount_factor_gamma": 0.7,
+    "learning_rate_alpha": 0.1,
+    "discount_factor_gamma": 0.95,
     "exploration_rate_epsilon": 0.3,
     "epsilon_decay": 0.995,
     "epsilon_min": 0.01,
-    "exploration_interval": 10,  # explore every N time steps
 }
 
 # State Space Configuration
