@@ -82,6 +82,8 @@ class DisasterEnvironment:
         self.total_deaths = 0
         self.episode_rewards = []
         self.current_episode_reward = 0
+        self.surges_applied = 0
+        self.surge_interval_steps = self._compute_surge_interval()
         
         # History for visualization
         self.history = {
@@ -110,6 +112,15 @@ class DisasterEnvironment:
             if scenario["name"] == name:
                 return scenario
         return DISASTER_SCENARIOS[0]  # Default to first scenario
+
+    def _compute_surge_interval(self) -> int:
+        """Steps between tsunami wave surges (0 if scenario has no surges)"""
+        wave_surges = self.scenario.get("wave_surges", 0)
+        if wave_surges <= 0:
+            return 0
+        duration_hours = self.scenario.get("duration_hours", 24)
+        duration_steps = (duration_hours * 60) // SIMULATION_CONFIG["time_step_minutes"]
+        return max(1, duration_steps // (wave_surges + 1))
     
     def _initialize_infrastructure(self):
         """Initialize all infrastructure entities"""
@@ -212,7 +223,13 @@ class DisasterEnvironment:
         for venue in self.public_venues:
             state.append(venue.get_discrete_damage_level())
             state.append(venue.get_resource_level())
-        
+
+        # Disaster phase, appended last so infrastructure pairs keep their offsets:
+        # whether the disaster is still active, and coarse episode progress (0-4)
+        state.append(int(self.disaster.is_active))
+        progress = self.time_step / self.max_time_steps if self.max_time_steps > 0 else 0
+        state.append(min(4, int(progress * 5)))
+
         return np.array(state, dtype=np.int32)
     
     def get_state_tuple(self) -> Tuple:
@@ -243,29 +260,47 @@ class DisasterEnvironment:
             info: Additional information
         """
         electricity_action, water_action = self.decode_action(action)
-        
+
         # Get distribution ratios
         elec_ratios = ACTION_CONFIG["electricity_distribution_ratios"][electricity_action]
         water_ratios = ACTION_CONFIG["water_distribution_ratios"][water_action]
-        
+
+        # Hurricane-style scenarios: random grid outages before generation
+        outage_prob = self.scenario.get("power_outage_probability", 0)
+        for station in self.power_stations:
+            station.outage = bool(
+                self.disaster.is_active and outage_prob > 0
+                and np.random.random() < outage_prob
+            )
+
         # Generate resources from stations
         total_power = sum(station.generate_power() for station in self.power_stations)
-        
-        # Allocate power to water stations first (they need it to operate)
-        water_station_power = total_power * 0.1  # 10% for water stations
+
+        # Allocate power to water stations first (they need it to operate),
+        # proportional to their actual power requirements
+        total_water_req = sum(s.power_required for s in self.water_stations)
+        water_station_power = min(total_power, total_water_req)
         for station in self.water_stations:
-            station.allocate_power(water_station_power / len(self.water_stations))
-        
+            share = station.power_required / total_water_req if total_water_req > 0 else 0
+            station.allocate_power(water_station_power * share)
+
         total_water = sum(station.pump_water() for station in self.water_stations)
-        
-        # Distribute remaining power
-        distributable_power = total_power * 0.9
+
+        # Distribute remaining power; the "reserve" share stays unallocated
+        distributable_power = total_power - water_station_power
         hospital_power = distributable_power * elec_ratios[0]
         venue_power = distributable_power * elec_ratios[1]
-        
-        # Distribute water
+        reserve_power = distributable_power * elec_ratios[2]
+
+        # Distribute water; the "reserve" share stays unallocated
         hospital_water = total_water * water_ratios[0]
         venue_water = total_water * water_ratios[1]
+        reserve_water = total_water * water_ratios[2]
+
+        # Fraction of generated resources left unallocated (wasted)
+        power_waste = reserve_power / total_power if total_power > 0 else 0.0
+        water_waste = reserve_water / total_water if total_water > 0 else 0.0
+        waste_fraction = (power_waste + water_waste) / 2
         
         # Allocate to hospitals
         step_discharged = 0
@@ -280,13 +315,19 @@ class DisasterEnvironment:
             step_discharged += result["discharged"]
             step_deaths += result["deceased"]
         
+        # Scenario-driven venue effects
+        casualty_bonus = self.scenario.get("casualty_rate", 0) if self.disaster.is_active else 0
+        arrival_bonus = 10.0 if (
+            self.scenario.get("evacuation_required", False) and self.disaster.is_active
+        ) else 0.0
+
         # Allocate to public venues
         for i, venue in enumerate(self.public_venues):
             power_share = venue_power / len(self.public_venues)
             water_share = venue_water / len(self.public_venues)
             venue.allocate_resources(water_share, power_share)
-            
-            result = venue.simulate_step()
+
+            result = venue.simulate_step(casualty_bonus=casualty_bonus, arrival_bonus=arrival_bonus)
             step_deaths += result["casualties"]
         
         # Repair infrastructure
@@ -304,20 +345,31 @@ class DisasterEnvironment:
         
         # Check for ongoing disaster effects
         if self.disaster.is_active:
-            self.disaster.tick()
-            
+            self.disaster.tick(SIMULATION_CONFIG["time_step_minutes"] / 60)
+
             # Apply ongoing damage
             ongoing_damage = self.disaster.get_ongoing_damage()
             if ongoing_damage > 0:
                 for infra in self.hospitals + self.power_stations + self.water_stations + self.public_venues:
                     infra.apply_damage(ongoing_damage * np.random.random())
-            
+
             # Check for aftershocks
             if self.disaster.check_aftershock():
                 self._apply_aftershock()
-        
+
+            # Tsunami-style wave surges at regular intervals
+            if (
+                self.surge_interval_steps > 0
+                and self.surges_applied < self.scenario.get("wave_surges", 0)
+                and self.time_step >= (self.surges_applied + 1) * self.surge_interval_steps
+            ):
+                self._apply_surge()
+                self.surges_applied += 1
+
         # Calculate reward
-        reward = self._calculate_reward(step_discharged, step_deaths, total_power, total_water)
+        reward = self._calculate_reward(
+            step_discharged, step_deaths, total_power, total_water, waste_fraction
+        )
         
         # Update tracking
         self.total_discharged += step_discharged
@@ -350,32 +402,54 @@ class DisasterEnvironment:
     def _apply_aftershock(self):
         """Apply aftershock damage"""
         aftershock_damage = self.scenario.get("aftershock_damage", 0.2)
-        
+
         for infra in self.hospitals + self.power_stations + self.water_stations + self.public_venues:
             if np.random.random() < 0.5:  # 50% chance to affect each infrastructure
                 infra.apply_damage(aftershock_damage * np.random.random())
-    
-    def _calculate_reward(self, discharged: int, deaths: int, power: float, water: float) -> float:
+
+    def _apply_surge(self):
+        """Apply a tsunami wave surge: damage to everything plus re-contamination"""
+        surge_damage = self.scenario.get("surge_damage", 0.25)
+
+        for infra in self.hospitals + self.power_stations + self.water_stations + self.public_venues:
+            infra.apply_damage(surge_damage * np.random.random())
+
+        if self.scenario.get("water_contamination", False):
+            for station in self.water_stations:
+                station.contaminate(np.random.uniform(0.1, 0.3))
+
+    def _calculate_reward(
+        self,
+        discharged: int,
+        deaths: int,
+        power: float,
+        water: float,
+        waste_fraction: float = 0.0,
+    ) -> float:
         """Calculate reward for this time step"""
         reward = 0
-        
+
         # Positive reward for discharges
         reward += discharged * REWARD_CONFIG["patient_discharged"]
-        
+
         # Negative reward for deaths
         reward += deaths * REWARD_CONFIG["patient_death"]
-        
+
         # Check for infrastructure failures
         for infra in self.hospitals + self.power_stations + self.water_stations + self.public_venues:
             if not infra.is_operational:
                 reward += REWARD_CONFIG["infrastructure_failure"]
-        
+
+        # Penalty for generated resources left unallocated (reserve share).
+        # Scaled so full waste of both resources costs 10x the per-unit penalty.
+        reward += REWARD_CONFIG["resource_waste"] * waste_fraction * 10
+
         # Efficiency bonus
         total_hospital_satisfaction = sum(h.get_resource_satisfaction() for h in self.hospitals)
         avg_satisfaction = total_hospital_satisfaction / len(self.hospitals)
         if avg_satisfaction > 0.7:
             reward += REWARD_CONFIG["efficient_allocation"]
-        
+
         return reward
     
     def _update_history(self, reward, discharged, deaths, power, water, action):
@@ -397,10 +471,12 @@ class DisasterEnvironment:
         if scenario_name:
             self.scenario_name = scenario_name
             self.scenario = self._get_scenario(scenario_name)
-        
+
         # Reset time
         self.time_step = 0
         self.hours_elapsed = 0
+        self.surges_applied = 0
+        self.surge_interval_steps = self._compute_surge_interval()
         
         # Store episode reward
         if self.current_episode_reward != 0:
