@@ -304,6 +304,22 @@ def display_simulation_state():
         with tab:
             display_city(city)
 
+    # System-wide run charts (rendered once — not per city)
+    if st.session_state.history:
+        st.divider()
+        st.subheader("📊 Performance Charts")
+        df = pd.DataFrame(st.session_state.history)
+        col1, col2 = st.columns(2)
+        with col1:
+            fig = px.line(df, x="step", y="reward", title="Reward over Time")
+            fig.update_layout(height=280)
+            st.plotly_chart(fig, width="stretch", key="run_reward_chart")
+        with col2:
+            fig = px.line(df, x="step", y=["total_discharged", "total_deaths"],
+                          title="Cumulative Outcomes")
+            fig.update_layout(height=280)
+            st.plotly_chart(fig, width="stretch", key="run_outcomes_chart")
+
 
 def display_city(city: dict):
     epicenter = " ⚠️ EPICENTER" if city["distance_from_epicenter"] == 0 else ""
@@ -323,7 +339,7 @@ def display_city(city: dict):
             "Discharged": h["discharged"], "Deceased": h["deceased"],
             "Damage": f"{h['damage']*100:.1f}%",
             "Resources": f"{h['resource_satisfaction']*100:.1f}%",
-        } for h in city["hospitals"]]), use_container_width=True)
+        } for h in city["hospitals"]]), width="stretch")
 
         st.markdown("**🏛️ Public Venues**")
         st.dataframe(pd.DataFrame([{
@@ -332,7 +348,7 @@ def display_city(city: dict):
             "Casualties": v["casualties"],
             "Damage": f"{v['damage']*100:.1f}%",
             "Resources": f"{v['resource_satisfaction']*100:.1f}%",
-        } for v in city["venues"]]), use_container_width=True)
+        } for v in city["venues"]]), width="stretch")
 
     with col2:
         st.markdown("**⚡ Power Stations**")
@@ -341,7 +357,7 @@ def display_city(city: dict):
             "Output": f"{p['output']:.0f}/{p['capacity']:.0f} kW",
             "Damage": f"{p['damage']*100:.1f}%",
             "Fuel": f"{p['fuel']*100:.1f}%",
-        } for p in city["power_stations"]]), use_container_width=True)
+        } for p in city["power_stations"]]), width="stretch")
 
         st.markdown("**💧 Water Stations**")
         st.dataframe(pd.DataFrame([{
@@ -350,20 +366,7 @@ def display_city(city: dict):
             "Damage": f"{w['damage']*100:.1f}%",
             "Reservoir": f"{w['reservoir']*100:.1f}%",
             "Contamination": f"{w['contamination']*100:.1f}%",
-        } for w in city["water_stations"]]), use_container_width=True)
-
-    if st.session_state.history:
-        df = pd.DataFrame(st.session_state.history)
-        col1, col2 = st.columns(2)
-        with col1:
-            fig = px.line(df, x="step", y="reward", title="Reward over Time")
-            fig.update_layout(height=280)
-            st.plotly_chart(fig, use_container_width=True)
-        with col2:
-            fig = px.line(df, x="step", y=["total_discharged", "total_deaths"],
-                          title="Cumulative Outcomes")
-            fig.update_layout(height=280)
-            st.plotly_chart(fig, use_container_width=True)
+        } for w in city["water_stations"]]), width="stretch")
 
 
 # ---------------------------------------------------------------------------
@@ -429,7 +432,7 @@ def run_training(config: WorldConfig, n_episodes: int, alpha: float, gamma: floa
                     fig.add_trace(go.Scatter(x=df["Episode"], y=df["Discharged"],
                                              mode="lines", name="Discharged"), row=1, col=2)
                     fig.update_layout(height=300, showlegend=False)
-                    chart_placeholder.plotly_chart(fig, use_container_width=True)
+                    chart_placeholder.plotly_chart(fig, width="stretch")
 
             st.session_state.trained_agent = agent
             st.session_state.training_rewards = rewards
@@ -503,18 +506,18 @@ def run_evaluation(config: WorldConfig, agent_type: str, model_name: str):
                 }
                 for name, r in results.items()
             ])
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width="stretch")
 
             col1, col2 = st.columns(2)
             with col1:
                 fig = px.bar(df, x="Agent", y="Avg Reward",
                              title="Average Reward Comparison",
                              color="Agent", error_y="Std Reward")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             with col2:
                 fig = px.bar(df, x="Agent", y=["Avg Discharged", "Avg Deaths"],
                              title="Healthcare Outcomes", barmode="group")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
             winner = df.loc[df["Avg Reward"].idxmax(), "Agent"]
             st.success(f"🏆 Best Performing Agent: **{winner}**")
@@ -561,7 +564,7 @@ def run_policy_inspector(config: WorldConfig, model_name: str):
                      title="Actions taken during training",
                      labels={"x": "Action (Elec/Water/Op)", "y": "Count"})
         fig.update_layout(height=350)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info("No action distribution recorded (agent was loaded from disk).")
 
@@ -600,7 +603,7 @@ def run_policy_inspector(config: WorldConfig, model_name: str):
             yaxis_title="Average city damage",
             height=400,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info("No matching visited states for the heatmap grid. Train longer to populate it.")
 
@@ -616,7 +619,7 @@ def run_policy_inspector(config: WorldConfig, model_name: str):
                 "max_q": float(np.max(q)),
             })
         top = pd.DataFrame(rows).sort_values("max_q", ascending=False).head(20)
-        st.dataframe(top, use_container_width=True)
+        st.dataframe(top, width="stretch")
 
         st.download_button(
             "⬇️ Download policy table (CSV)",
