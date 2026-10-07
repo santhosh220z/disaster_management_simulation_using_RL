@@ -5,6 +5,7 @@ Training Pipeline for Disaster Management RL Agent
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
+import random
 import time
 import json
 from datetime import datetime
@@ -25,18 +26,22 @@ class Trainer:
         scenarios: List[str] = None,
         save_dir: str = "models",
         verbose: bool = True,
+        seed: Optional[int] = None,
     ):
         """
         Initialize trainer
-        
+
         Args:
             n_episodes: Number of training episodes
             scenarios: List of disaster scenarios to train on
             save_dir: Directory to save models
             verbose: Print training progress
+            seed: Base random seed for reproducible episodes
+                (defaults to SIMULATION_CONFIG["random_seed"])
         """
         self.n_episodes = n_episodes or SIMULATION_CONFIG["max_episodes"]
         self.scenarios = scenarios or [s["name"] for s in DISASTER_SCENARIOS]
+        self.seed = SIMULATION_CONFIG["random_seed"] if seed is None else seed
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.verbose = verbose
@@ -90,7 +95,12 @@ class Trainer:
         for episode in range(self.n_episodes):
             # Select scenario (rotate through available scenarios)
             scenario = self.scenarios[episode % len(self.scenarios)]
-            
+
+            # Re-seed per episode so training runs are reproducible
+            if self.seed is not None:
+                np.random.seed(self.seed + episode)
+                random.seed(self.seed + episode)
+
             # Reset environment
             state = env.reset(scenario_name=scenario)
             state_tuple = tuple(state.tolist())
@@ -232,16 +242,18 @@ class Evaluator:
     Evaluation pipeline for comparing agents
     """
     
-    def __init__(self, n_episodes: int = 10, scenarios: List[str] = None):
+    def __init__(self, n_episodes: int = 10, scenarios: List[str] = None, seed: Optional[int] = None):
         """
         Initialize evaluator
-        
+
         Args:
             n_episodes: Number of evaluation episodes per agent
             scenarios: Scenarios to evaluate on
+            seed: Base random seed for reproducible episodes
         """
         self.n_episodes = n_episodes
         self.scenarios = scenarios or [s["name"] for s in DISASTER_SCENARIOS]
+        self.seed = seed
     
     def evaluate(
         self,
@@ -273,6 +285,9 @@ class Evaluator:
         
         for episode in range(self.n_episodes):
             scenario = self.scenarios[episode % len(self.scenarios)]
+            if self.seed is not None:
+                np.random.seed(self.seed + episode)
+                random.seed(self.seed + episode)
             state = env.reset(scenario_name=scenario)
             state_tuple = tuple(state.tolist())
             
@@ -347,9 +362,10 @@ def quick_train(n_episodes: int = 50, verbose: bool = True) -> Tuple[QLearningAg
     Returns:
         Trained agent and results
     """
-    env = DisasterEnvironment(scenario_name="Earthquake", seed=42)
+    seed = SIMULATION_CONFIG["random_seed"]
+    env = DisasterEnvironment(scenario_name="Earthquake", seed=seed)
     agent = QLearningAgent(n_actions=env.n_actions)
-    trainer = Trainer(n_episodes=n_episodes, verbose=verbose)
+    trainer = Trainer(n_episodes=n_episodes, verbose=verbose, seed=seed)
     results = trainer.train(agent, env)
     return agent, results
 
@@ -368,15 +384,16 @@ def compare_with_manual(
     Returns:
         Comparison results
     """
-    env = DisasterEnvironment(scenario_name="Earthquake", seed=42)
-    
+    seed = SIMULATION_CONFIG["random_seed"]
+    env = DisasterEnvironment(scenario_name="Earthquake", seed=seed)
+
     # Create manual policies
     manual_balanced = ManualPolicy(strategy="balanced")
     manual_hospital = ManualPolicy(strategy="hospital_priority")
     adaptive_manual = AdaptiveManualPolicy()
-    
+
     # Compare
-    evaluator = Evaluator(n_episodes=n_episodes)
+    evaluator = Evaluator(n_episodes=n_episodes, seed=seed)
     comparison = evaluator.compare_agents([
         ("RL Agent", trained_agent),
         ("Manual (Balanced)", manual_balanced),
