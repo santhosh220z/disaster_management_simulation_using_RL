@@ -18,8 +18,10 @@ This project implements an intelligent decision-support system that learns optim
 - 🎚️ **Full Simulation Control**: Cities, infrastructure counts, population, disaster magnitude (1-10), delivery delays, repair crews — all from the dashboard World Builder
 - 🏥 **Dynamic Population**: Casualties, hospital inflow, evacuee migration, and shelter capacity all scale with city population
 - 🚚 **Operations Actions**: Repair crews, evacuation, and inter-city aid convoys with realistic delivery delays
+- 🧪 **Realistic Dynamics**: Overcrowding raises hospital mortality, contaminated water infects patients, resource-starved facilities degrade, and fuel is finite without aid resupply
 - 🤖 **Q-Learning Agent**: Learns optimal resource allocation policies
-- 📊 **Real-Time Dashboard**: Streamlit world builder, per-city monitoring, policy inspector, CSV/JSON export
+- 📋 **After-Action Reports**: Deaths by cause, per-city outcomes, aid logistics, resource utilization — exportable as JSON/CSV
+- 📊 **Real-Time Dashboard**: Streamlit world builder, city overview map, per-city monitoring, policy inspector
 - 📈 **Performance Comparison**: Compare RL agent against manual decision-making strategies
 - 🌪️ **Multiple Disaster Scenarios**: Earthquake, Flood, Hurricane, Industrial Accident, and Tsunami
 
@@ -115,6 +117,27 @@ The world is described by a `WorldConfig` (see `world.py`):
 | `inter_city_transfer_delay` | 6 | Steps for aid convoys between cities |
 
 Splash damage decays with distance from the epicenter: `damage / (1 + distance)`.
+
+### Realism Mechanics
+
+- **Overcrowding**: hospital mortality rises sharply above 90% bed occupancy
+- **Contaminated water**: flood/tsunami contamination infects hospital patients
+- **Deprivation damage**: facilities below 20% resource satisfaction degrade
+  (slower than passive repair — neglect has a cost, not a death sentence)
+- **Finite fuel**: passive refueling (0.008/step) is slower than consumption
+  (0.01/step) — long episodes need aid convoys, which also deliver fuel
+- **Delivery delays**: allocated resources arrive `delivery_delay_steps` later;
+  inter-city aid takes `inter_city_transfer_delay` steps
+
+### After-Action Reports
+
+Every run produces a detailed report (`env.get_episode_report()`, or the
+dashboard's report section):
+
+- Deaths by cause (hospitals / venues / at-home) and by city
+- Per-city outcomes: damage, hospital load, fuel, contamination
+- Evacuations performed, people moved, aid convoys delivered
+- Resource generation vs waste and utilization percentage
 
 ### State Space
 
@@ -236,29 +259,29 @@ evaluated over 10 episodes each (greedy policy, no exploration):
 
 | Agent | Avg Reward | Avg Discharged | Avg Deaths |
 |-------|------------|----------------|------------|
-| Q-Learning (RL) | 5751.5 ± 308.4 | 609.4 | 9.2 |
-| Manual (Balanced) | 4211.0 ± 577.2 | 498.6 | 16.4 |
-| Manual (Hospital Priority) | 5834.4 ± 599.0 | 624.7 | 11.0 |
-| Adaptive Manual | 6183.2 ± 292.7 | 655.1 | 10.2 |
+| Q-Learning (RL) | 5687.3 ± 300.4 | 607.1 | 10.0 |
+| Manual (Balanced) | 3903.2 ± 598.8 | 480.3 | 16.5 |
+| Manual (Hospital Priority) | 5723.2 ± 590.7 | 612.6 | 10.8 |
+| Adaptive Manual | 6153.5 ± 236.2 | 654.6 | 10.4 |
 
 **3 Cities** (20-dim state)
 
 | Agent | Avg Reward | Avg Discharged | Avg Deaths |
 |-------|------------|----------------|------------|
-| Q-Learning (RL) | 18851.6 ± 622.8 | 1966.3 | 19.0 |
-| Manual (Balanced) | 15914.6 ± 684.8 | 1693.2 | 22.8 |
-| Manual (Hospital Priority) | 19391.5 ± 627.3 | 2019.1 | 19.1 |
-| Adaptive Manual | 20279.0 ± 708.1 | 2087.0 | 15.0 |
+| Q-Learning (RL) | 18319.2 ± 570.0 | 1909.4 | 17.9 |
+| Manual (Balanced) | 15709.3 ± 678.1 | 1674.7 | 23.2 |
+| Manual (Hospital Priority) | 19078.9 ± 632.5 | 1992.3 | 20.0 |
+| Adaptive Manual | 20273.2 ± 608.4 | 2090.8 | 15.9 |
 
 Per-scenario baseline (Adaptive Manual policy, 3 episodes each, magnitude 5):
 
 | Scenario | Avg Reward | Avg Deaths | Avg Discharged |
 |----------|------------|------------|----------------|
-| Earthquake | 6143 | 9.0 | 645.7 |
-| Flood | 5852 | 15.3 | 647.7 |
-| Hurricane | 4965 | 27.3 | 620.0 |
-| Industrial Accident | 1815 | 96.0 | 648.0 |
-| Tsunami | 6113 | 11.7 | 656.3 |
+| Earthquake | 6072 | 11.0 | 652.3 |
+| Flood | 5654 | 21.3 | 657.3 |
+| Hurricane | 5278 | 21.3 | 623.7 |
+| Industrial Accident | 1688 | 98.7 | 652.3 |
+| Tsunami | 4413 | 41.7 | 638.7 |
 
 Key findings:
 
