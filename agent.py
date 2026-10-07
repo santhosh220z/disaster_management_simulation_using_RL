@@ -4,6 +4,7 @@ Implements Q-Learning with epsilon-greedy exploration
 """
 
 import ast
+import logging
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
 from collections import defaultdict
@@ -11,7 +12,9 @@ import pickle
 import json
 from pathlib import Path
 
-from config import RL_CONFIG, ACTION_CONFIG, INFRASTRUCTURE_CONFIG
+from config import RL_CONFIG, ACTION_CONFIG, OPS_CONFIG
+
+logger = logging.getLogger(__name__)
 
 
 class QLearningAgent:
@@ -43,11 +46,11 @@ class QLearningAgent:
             epsilon_min: Minimum epsilon value
         """
         self.n_actions = n_actions
-        self.alpha = learning_rate or RL_CONFIG["learning_rate_alpha"]
-        self.gamma = discount_factor or RL_CONFIG["discount_factor_gamma"]
-        self.epsilon = epsilon or RL_CONFIG["exploration_rate_epsilon"]
-        self.epsilon_decay = epsilon_decay or RL_CONFIG["epsilon_decay"]
-        self.epsilon_min = epsilon_min or RL_CONFIG["epsilon_min"]
+        self.alpha = learning_rate if learning_rate is not None else RL_CONFIG["learning_rate_alpha"]
+        self.gamma = discount_factor if discount_factor is not None else RL_CONFIG["discount_factor_gamma"]
+        self.epsilon = epsilon if epsilon is not None else RL_CONFIG["exploration_rate_epsilon"]
+        self.epsilon_decay = epsilon_decay if epsilon_decay is not None else RL_CONFIG["epsilon_decay"]
+        self.epsilon_min = epsilon_min if epsilon_min is not None else RL_CONFIG["epsilon_min"]
         
         # Q-table: state -> action values
         self.q_table: Dict[Tuple, np.ndarray] = defaultdict(
@@ -206,8 +209,8 @@ class QLearningAgent:
         
         with open(filepath, "wb") as f:
             pickle.dump(save_data, f)
-        
-        print(f"Agent saved to {filepath}")
+
+        logger.info(f"Agent saved to {filepath}")
     
     def load(self, filepath: str):
         """Load agent from file"""
@@ -233,8 +236,8 @@ class QLearningAgent:
         )
         self.current_episode = save_data["current_episode"]
         self.total_steps = save_data["total_steps"]
-        
-        print(f"Agent loaded from {filepath}")
+
+        logger.info(f"Agent loaded from {filepath}")
     
     def reset_exploration_stats(self):
         """Reset exploration/exploitation counters"""
@@ -251,7 +254,7 @@ class ManualPolicy:
     def __init__(self, strategy: str = "balanced"):
         """
         Initialize manual policy
-        
+
         Args:
             strategy: 'balanced', 'hospital_priority', 'even_distribution'
         """
@@ -262,15 +265,16 @@ class ManualPolicy:
             "even_distribution": 4,  # Even distribution
             "emergency": 3,  # Emergency hospital mode
         }
-    
+        self.n_water_actions = len(ACTION_CONFIG["water_distribution_ratios"])
+        self.n_ops = len(OPS_CONFIG["operations"])
+
     def get_action(self, state: Tuple, training: bool = False) -> int:
-        """Get action based on fixed strategy"""
+        """Get action based on fixed strategy (operation: none)"""
         electricity_action = self.action_map.get(self.strategy, 1)
         water_action = self.action_map.get(self.strategy, 1)
-        
-        # Combine into single action
-        n_water_actions = len(ACTION_CONFIG["water_distribution_ratios"])
-        return electricity_action * n_water_actions + water_action
+
+        # 3-way encoding: (electricity, water, operation)
+        return (electricity_action * self.n_water_actions + water_action) * self.n_ops + (self.n_ops - 1)
     
     def update(self, *args, **kwargs):
         """No-op for manual policy"""
@@ -284,41 +288,47 @@ class ManualPolicy:
 class AdaptiveManualPolicy:
     """
     Adaptive manual policy that changes based on situation
-    More sophisticated rule-based approach
+    More sophisticated rule-based approach.
+    Parses the aggregate per-city state (6 buckets per city + 2 global).
     """
-    
+
+    CITY_STATE_WIDTH = 6
+
     def __init__(self):
         self.n_water_actions = len(ACTION_CONFIG["water_distribution_ratios"])
-        self.n_hospitals = INFRASTRUCTURE_CONFIG["hospitals"]["count"]
+        self.n_ops = len(OPS_CONFIG["operations"])
 
     def get_action(self, state: Tuple, training: bool = False) -> int:
         """
         Get action based on current state
 
-        Adapts strategy based on observed damage levels
+        Adapts strategy based on observed aggregate damage levels:
+        emergency hospital mode + repair crews if any city is critical.
         """
-        # Parse state to understand current situation
-        # State format: [hospital1_damage, hospital1_resource, hospital2_damage, ...]
+        n_cities = (len(state) - 2) // self.CITY_STATE_WIDTH
 
-        # Check if any hospital is in critical condition
         hospital_critical = False
-        for i in range(0, self.n_hospitals * 2, 2):
-            damage_level = state[i]
-            resource_level = state[i + 1]
-            if damage_level >= 3 or resource_level <= 1:
+        for c in range(n_cities):
+            base = c * self.CITY_STATE_WIDTH
+            avg_damage = state[base]
+            hospital_satisfaction = state[base + 1]
+            hospital_load = state[base + 2]
+            if avg_damage >= 3 or hospital_satisfaction <= 1 or hospital_load >= 3:
                 hospital_critical = True
                 break
-        
+
         if hospital_critical:
-            # Emergency mode: prioritize hospitals
+            # Emergency mode: prioritize hospitals and send repair crews
             electricity_action = 3  # Emergency hospital mode
             water_action = 3
+            op = OPS_CONFIG["operations"].index("repair_hospitals")
         else:
-            # Balanced distribution
+            # Balanced distribution, no operation
             electricity_action = 1
             water_action = 1
-        
-        return electricity_action * self.n_water_actions + water_action
+            op = self.n_ops - 1  # "none"
+
+        return (electricity_action * self.n_water_actions + water_action) * self.n_ops + op
     
     def update(self, *args, **kwargs):
         """No-op"""
