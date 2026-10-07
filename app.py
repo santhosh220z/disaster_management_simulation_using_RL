@@ -32,14 +32,34 @@ st.markdown("""
 <style>
     .stMetric {
         background-color: #f0f2f6;
-        padding: 10px;
-        border-radius: 5px;
+        padding: 10px 14px;
+        border-radius: 8px;
+        border: 1px solid #e0e3e9;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
     .stMetric label, .stMetric [data-testid="stMetricValue"],
     .stMetric [data-testid="stMetricLabel"], .stMetric [data-testid="stMetricDelta"],
     div[data-testid="stMetric"] > div, div[data-testid="stMetric"] label {
         color: #000000 !important;
     }
+    .city-card {
+        background-color: #f8f9fb;
+        border: 1px solid #e0e3e9;
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin-bottom: 8px;
+    }
+    .city-card h4 { margin: 0 0 4px 0; }
+    .city-card .muted { color: #6b7280; font-size: 0.85rem; }
+    .report-header {
+        background: linear-gradient(90deg, #1f3b57, #35618e);
+        color: white;
+        padding: 14px 20px;
+        border-radius: 10px;
+        margin-bottom: 12px;
+    }
+    .report-header h3 { margin: 0; color: white; }
+    .report-header p { margin: 2px 0 0 0; color: #cfe0f0; font-size: 0.9rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -298,6 +318,24 @@ def display_simulation_state():
 
     st.divider()
 
+    # City overview map (bubble: size = population, color = damage)
+    if metrics["n_cities"] > 1:
+        st.subheader("🗺️ City Overview")
+        map_df = pd.DataFrame([{
+            "City": c["name"],
+            "Avg Damage (%)": c["avg_damage"] * 100,
+            "Population": c["population"],
+            "Deaths": next((r["deaths"] for r in metrics["report"]["per_city"]
+                            if r["name"] == c["name"]), 0),
+        } for c in metrics["cities"]])
+        fig = px.scatter(
+            map_df, x="City", y="Avg Damage (%)", size="Population",
+            color="Avg Damage (%)", color_continuous_scale="Reds",
+            hover_data=["Deaths"], size_max=60,
+        )
+        fig.update_layout(height=280, showlegend=False, coloraxis_showscale=False)
+        st.plotly_chart(fig, width="stretch", key="city_overview_map")
+
     # Per-city views
     city_tabs = st.tabs([f"🏙️ {c['name']}" for c in metrics["cities"]])
     for tab, city in zip(city_tabs, metrics["cities"]):
@@ -319,6 +357,113 @@ def display_simulation_state():
                           title="Cumulative Outcomes")
             fig.update_layout(height=280)
             st.plotly_chart(fig, width="stretch", key="run_outcomes_chart")
+
+        display_after_action_report(env)
+
+
+def display_after_action_report(env: DisasterEnvironment):
+    """Detailed after-action report: causes, per-city outcomes, logistics"""
+    report = env.get_episode_report()
+
+    st.divider()
+    st.markdown(
+        f"""<div class="report-header">
+            <h3>📋 After-Action Report</h3>
+            <p>{report['scenario']} · magnitude {report['magnitude']} ·
+            {report['n_cities']} cit{'ies' if report['n_cities'] > 1 else 'y'} ·
+            {report['hours_elapsed']:.1f} hours simulated</p>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    # Headline KPIs
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        st.metric("❌ Deaths", report["total_deaths"])
+    with c2:
+        st.metric("✅ Discharged", report["total_discharged"])
+    with c3:
+        st.metric("🚶 Evacuated", report["total_evacuated"])
+    with c4:
+        st.metric("🚚 Aid Convoys", report["aid_delivered"]["convoys"])
+    with c5:
+        st.metric("⚡ Resource Utilization",
+                  f"{report['resources']['utilization']*100:.1f}%")
+
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        # Deaths by cause
+        causes = report["deaths_by_cause"]
+        if sum(causes.values()) > 0:
+            fig = px.pie(
+                names=["Hospitals", "Public Venues", "At Home"],
+                values=[causes["hospital"], causes["venue"], causes["at_home"]],
+                title="Deaths by Cause",
+                color_discrete_sequence=["#c0392b", "#e67e22", "#7f8c8d"],
+            )
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, width="stretch", key="report_deaths_pie")
+
+        # Aid delivered breakdown
+        st.markdown("**🚚 Aid Delivered**")
+        aid = report["aid_delivered"]
+        st.caption(
+            f"Convoys: {aid['convoys']} | Water: {aid['water']:.0f} units | "
+            f"Medical kits: {aid['medical_kits']} | Fuel: {aid['fuel']*100:.0f}%"
+        )
+        st.markdown("**🏚️ Infrastructure Failures**")
+        st.caption(f"{report['infrastructure_failures']} facilities non-operational")
+
+    with col2:
+        # Per-city outcomes table
+        st.markdown("**🏙️ Outcomes by City**")
+        city_df = pd.DataFrame([{
+            "City": c["name"],
+            "Epicenter": "⚠️" if c["is_epicenter"] else "",
+            "Population": f"{c['population']:,}",
+            "Deaths": c["deaths"],
+            "Discharged": c["discharged"],
+            "Avg Damage": f"{c['avg_damage']*100:.1f}%",
+            "Hospital Load": f"{c['hospital_load']*100:.0f}%",
+            "Fuel Left": f"{c['fuel_remaining']*100:.0f}%",
+            "Contamination": f"{c['contamination']*100:.0f}%",
+        } for c in report["per_city"]])
+        st.dataframe(city_df, width="stretch", hide_index=True)
+
+        # Resource generation vs waste
+        res = report["resources"]
+        fig = go.Figure(go.Bar(
+            x=["Power", "Water"],
+            y=[res["power_generated"], res["water_generated"]],
+            name="Generated", marker_color="#35618e",
+        ))
+        fig.add_trace(go.Bar(
+            x=["Power", "Water"],
+            y=[res["power_wasted"], res["water_wasted"]],
+            name="Wasted (reserve)", marker_color="#c0392b",
+        ))
+        fig.update_layout(height=260, barmode="overlay",
+                          title="Resources Generated vs Wasted",
+                          legend=dict(orientation="h", y=-0.2))
+        st.plotly_chart(fig, width="stretch", key="report_resources_bar")
+
+    # Downloads
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.download_button(
+            "⬇️ Download full report (JSON)",
+            json.dumps(report, default=str, indent=2),
+            file_name="after_action_report.json",
+            mime="application/json",
+        )
+    with col_b:
+        st.download_button(
+            "⬇️ Download per-city outcomes (CSV)",
+            pd.DataFrame(report["per_city"]).to_csv(index=False),
+            file_name="city_outcomes.csv",
+            mime="text/csv",
+        )
 
 
 def display_city(city: dict):
