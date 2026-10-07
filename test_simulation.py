@@ -96,7 +96,7 @@ class TestEnvironment:
         assert len(env.hospitals) > 0
         assert len(env.power_stations) > 0
         assert len(env.water_stations) > 0
-        assert env.n_actions == 25  # 5 * 5
+        assert env.n_actions == 150  # 5 electricity * 5 water * 6 operations
     
     def test_get_state(self):
         """Test state representation"""
@@ -198,10 +198,10 @@ class TestAgent:
     def test_manual_policy(self):
         """Test manual policy"""
         policy = ManualPolicy(strategy="balanced")
-        state = (1, 2, 1, 2)
-        
+        state = (1, 2, 1, 2, 1, 2, 1, 2)
+
         action = policy.get_action(state)
-        assert 0 <= action < 25
+        assert 0 <= action < 150
 
 
 class TestTraining:
