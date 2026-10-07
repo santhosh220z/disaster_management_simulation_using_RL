@@ -4,8 +4,11 @@ Command-line interface for training, evaluation, and simulation
 """
 
 import argparse
+import logging
 import sys
 from pathlib import Path
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 from environment import DisasterEnvironment
 from agent import QLearningAgent, ManualPolicy, AdaptiveManualPolicy
@@ -197,8 +200,8 @@ Examples:
     train_parser.add_argument('--scenario', type=str, default='Earthquake', 
                              choices=[s['name'] for s in DISASTER_SCENARIOS],
                              help='Disaster scenario to train on')
-    train_parser.add_argument('--alpha', type=float, default=0.5, help='Learning rate')
-    train_parser.add_argument('--gamma', type=float, default=0.7, help='Discount factor')
+    train_parser.add_argument('--alpha', type=float, default=None, help='Learning rate (default: config value)')
+    train_parser.add_argument('--gamma', type=float, default=None, help='Discount factor (default: config value)')
     train_parser.add_argument('--epsilon', type=float, default=0.3, help='Initial exploration rate')
     train_parser.add_argument('--seed', type=int, help='Random seed')
     train_parser.add_argument('--output', type=str, default='models', help='Output directory')

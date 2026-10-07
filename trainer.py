@@ -5,10 +5,13 @@ Training Pipeline for Disaster Management RL Agent
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
+import logging
 import random
 import time
 import json
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from environment import DisasterEnvironment
 from agent import QLearningAgent, ManualPolicy, AdaptiveManualPolicy
@@ -83,14 +86,14 @@ class Trainer:
         start_time = time.time()
         
         if self.verbose:
-            print(f"\n{'='*60}")
-            print("STARTING TRAINING")
-            print(f"Episodes: {self.n_episodes}")
-            print(f"Scenarios: {self.scenarios}")
-            print(f"Learning Rate: {agent.alpha}")
-            print(f"Discount Factor: {agent.gamma}")
-            print(f"Initial Epsilon: {agent.epsilon}")
-            print(f"{'='*60}\n")
+            logger.info(f"\n{'='*60}")
+            logger.info("STARTING TRAINING")
+            logger.info(f"Episodes: {self.n_episodes}")
+            logger.info(f"Scenarios: {self.scenarios}")
+            logger.info(f"Learning Rate: {agent.alpha}")
+            logger.info(f"Discount Factor: {agent.gamma}")
+            logger.info(f"Initial Epsilon: {agent.epsilon}")
+            logger.info(f"{'='*60}\n")
         
         for episode in range(self.n_episodes):
             # Select scenario (rotate through available scenarios)
@@ -143,13 +146,13 @@ class Trainer:
             
             # Render if requested
             if render_frequency > 0 and (episode + 1) % render_frequency == 0:
-                print(env.render())
+                logger.info(env.render())
             
             # Progress logging
             if self.verbose and (episode + 1) % 5 == 0:
                 avg_reward = np.mean(self.training_history["episode_rewards"][-5:])
                 avg_discharged = np.mean(self.training_history["episode_discharged"][-5:])
-                print(
+                logger.info(
                     f"Episode {episode + 1}/{self.n_episodes} | "
                     f"Reward: {episode_reward:.1f} | "
                     f"Avg(5): {avg_reward:.1f} | "
@@ -214,27 +217,27 @@ class Trainer:
     
     def _print_summary(self, results: Dict):
         """Print training summary"""
-        print(f"\n{'='*60}")
-        print("TRAINING COMPLETE")
-        print(f"{'='*60}")
-        print(f"Total Episodes: {results['total_episodes']}")
-        print(f"Training Time: {results['training_time_seconds']:.1f} seconds")
-        print(f"Best Reward: {results['best_reward']:.1f} (Episode {results['best_episode']})")
-        print(f"Final Reward: {results['final_reward']:.1f}")
-        print(f"Average Reward: {results['avg_reward']:.1f}")
-        print(f"Avg Reward (Last 10): {results['avg_reward_last_10']:.1f}")
-        print(f"Total Patients Discharged: {results['total_discharged']}")
-        print(f"Total Deaths: {results['total_deaths']}")
-        print(f"Final Epsilon: {results['final_epsilon']:.4f}")
-        print(f"Q-Table Size: {results['q_table_size']} states")
-        print(f"{'='*60}\n")
+        logger.info(f"\n{'='*60}")
+        logger.info("TRAINING COMPLETE")
+        logger.info(f"{'='*60}")
+        logger.info(f"Total Episodes: {results['total_episodes']}")
+        logger.info(f"Training Time: {results['training_time_seconds']:.1f} seconds")
+        logger.info(f"Best Reward: {results['best_reward']:.1f} (Episode {results['best_episode']})")
+        logger.info(f"Final Reward: {results['final_reward']:.1f}")
+        logger.info(f"Average Reward: {results['avg_reward']:.1f}")
+        logger.info(f"Avg Reward (Last 10): {results['avg_reward_last_10']:.1f}")
+        logger.info(f"Total Patients Discharged: {results['total_discharged']}")
+        logger.info(f"Total Deaths: {results['total_deaths']}")
+        logger.info(f"Final Epsilon: {results['final_epsilon']:.4f}")
+        logger.info(f"Q-Table Size: {results['q_table_size']} states")
+        logger.info(f"{'='*60}\n")
     
     def _save_history(self):
         """Save training history to file"""
         history_path = self.save_dir / "training_history.json"
         with open(history_path, "w") as f:
             json.dump(self.training_history, f, indent=2)
-        print(f"Training history saved to {history_path}")
+        logger.info(f"Training history saved to {history_path}")
 
 
 class Evaluator:
@@ -337,16 +340,16 @@ class Evaluator:
             results = self.evaluate(agent, env, name)
             comparison[name] = results
             
-            print(f"\n{name}:")
-            print(f"  Avg Reward: {results['avg_reward']:.1f} ± {results['std_reward']:.1f}")
-            print(f"  Avg Discharged: {results['avg_discharged']:.1f}")
-            print(f"  Avg Deaths: {results['avg_deaths']:.1f}")
+            logger.info(f"\n{name}:")
+            logger.info(f"  Avg Reward: {results['avg_reward']:.1f} ± {results['std_reward']:.1f}")
+            logger.info(f"  Avg Discharged: {results['avg_discharged']:.1f}")
+            logger.info(f"  Avg Deaths: {results['avg_deaths']:.1f}")
         
         # Determine winner
         best_agent = max(comparison.keys(), key=lambda x: comparison[x]["avg_reward"])
         comparison["winner"] = best_agent
         
-        print(f"\n🏆 Best Agent: {best_agent}")
+        logger.info(f"\n🏆 Best Agent: {best_agent}")
         
         return comparison
 
@@ -405,11 +408,12 @@ def compare_with_manual(
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     # Run quick training
     agent, results = quick_train(n_episodes=50)
     
     # Compare with manual policies
-    print("\n" + "="*60)
-    print("COMPARING WITH MANUAL POLICIES")
-    print("="*60)
+    logger.info("\n" + "="*60)
+    logger.info("COMPARING WITH MANUAL POLICIES")
+    logger.info("="*60)
     comparison = compare_with_manual(agent, n_episodes=10)
