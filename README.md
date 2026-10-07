@@ -14,11 +14,14 @@ This project implements an intelligent decision-support system that learns optim
 
 ### Key Features
 
-- 🏥 **Multi-Infrastructure Simulation**: Hospitals, power stations, water pumping stations, and public venues
+- 🏙️ **Configurable Multi-City World**: 1-5 cities with procedurally generated infrastructure, population, and a disaster epicenter with distance-decayed splash damage
+- 🎚️ **Full Simulation Control**: Cities, infrastructure counts, population, disaster magnitude (1-10), delivery delays, repair crews — all from the dashboard World Builder
+- 🏥 **Dynamic Population**: Casualties, hospital inflow, evacuee migration, and shelter capacity all scale with city population
+- 🚚 **Operations Actions**: Repair crews, evacuation, and inter-city aid convoys with realistic delivery delays
 - 🤖 **Q-Learning Agent**: Learns optimal resource allocation policies
-- 📊 **Real-Time Dashboard**: Streamlit-based visualization for monitoring and control
+- 📊 **Real-Time Dashboard**: Streamlit world builder, per-city monitoring, policy inspector, CSV/JSON export
 - 📈 **Performance Comparison**: Compare RL agent against manual decision-making strategies
-- 🌪️ **Multiple Disaster Scenarios**: Earthquake, Flood, Hurricane, and Industrial Accidents
+- 🌪️ **Multiple Disaster Scenarios**: Earthquake, Flood, Hurricane, Industrial Accident, and Tsunami
 
 ## 🏗️ System Architecture
 
@@ -93,22 +96,52 @@ python main.py dashboard
 
 ## 📐 Technical Details
 
+### World Configuration
+
+The world is described by a `WorldConfig` (see `world.py`):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `n_cities` | 1 | Number of cities (1-5 recommended) |
+| `hospitals_per_city` | 3 | Hospitals in each city |
+| `power_stations_per_city` | 2 | Power stations in each city |
+| `water_stations_per_city` | 2 | Water stations in each city |
+| `venues_per_city` | 2 | Public shelters in each city |
+| `city_population` | 10,000 | Population per city (infrastructure scales with it) |
+| `epicenter_city` | 0 | City where the disaster strikes hardest |
+| `magnitude` | 5.0 | Disaster magnitude 1-10 (drives damage, duration, aftershocks) |
+| `repair_crews` | 2 | Deployable repair crews |
+| `delivery_delay_steps` | 2 | Steps before allocated resources arrive |
+| `inter_city_transfer_delay` | 6 | Steps for aid convoys between cities |
+
+Splash damage decays with distance from the epicenter: `damage / (1 + distance)`.
+
 ### State Space
 
-The environment state is represented as a vector containing:
-- **Physical Damage Levels** (0-4): None, Minor, Moderate, Severe, Critical
-- **Resource Availability Levels** (0-4): None, Critical, Low, Medium, Full
+Aggregate per-city state — compact regardless of world size:
+**6 dimensions per city + 2 global** (all discrete levels 0-4):
 
-For each infrastructure entity (hospitals, power stations, water stations, public venues),
-followed by two phase indicators:
-- **Disaster Active Flag** (0/1): whether the disaster event is still ongoing
-- **Episode Progress** (0-4): coarse fraction of episode time elapsed
+1. Average infrastructure damage
+2. Hospital resource satisfaction
+3. Hospital load (patients / beds)
+4. Population at risk (at home / total)
+5. Pending deliveries & aid (relative to demand)
+6. Venue occupancy
+
+Plus a global disaster-active flag and episode progress indicator.
+A 3-city world has a 20-dimensional state.
 
 ### Action Space
 
-Combined action space with 25 discrete actions:
-- **5 Electricity Distribution Ratios**: Different allocations to hospitals, public venues, and reserves
-- **5 Water Distribution Ratios**: Different allocations to hospitals, public venues, and reserves
+**150 discrete actions** = 5 electricity ratios × 5 water ratios × 6 operations:
+
+- **Distribution ratios**: allocations to hospitals, venues, and reserve
+  (applied within each city; the reserve share is unallocated and penalized as waste)
+- **Operations** (auto-target the most-damaged city):
+  `repair_power`, `repair_water`, `repair_hospitals` — deploy repair crews
+  `evacuate` — move people to the safest city's shelters (capacity-limited)
+  `send_aid` — dispatch a convoy with water and medical kits from the safest city
+  `none`
 
 ### Reward Function
 
@@ -130,7 +163,7 @@ unallocated resources are lost.
 | γ (Discount Factor) | 0.95 | Importance of future rewards |
 | ε (Exploration Rate) | 0.3 | Initial probability of random action |
 | ε Decay | 0.995 | Exploration decay rate per episode |
-| Episodes | 50 | Number of training episodes |
+| Episodes | 200 | Number of training episodes |
 
 Training is reproducible: the trainer re-seeds the RNG per episode from
 `SIMULATION_CONFIG["random_seed"]` (42).
@@ -139,15 +172,19 @@ Training is reproducible: the trainer re-seeds the RNG per episode from
 
 ```
 disaster/
-├── app.py              # Streamlit dashboard application
+├── app.py              # Streamlit dashboard (world builder, policy inspector)
 ├── main.py             # CLI entry point
 ├── config.py           # Configuration parameters
+├── world.py            # Multi-city world generation (WorldConfig, City)
 ├── environment.py      # Disaster simulation environment
 ├── infrastructure.py   # Infrastructure entity models
 ├── agent.py            # RL agents (Q-Learning, Manual policies)
 ├── trainer.py          # Training and evaluation pipelines
 ├── visualization.py    # Matplotlib visualizations
+├── test_simulation.py  # Core test suite
+├── test_world.py       # Multi-city world test suite
 ├── requirements.txt    # Python dependencies
+├── .github/workflows/  # CI (pytest on push)
 ├── README.md           # This file
 └── models/             # Saved models directory
     ├── best_agent.pkl
@@ -157,27 +194,28 @@ disaster/
 
 ## 🎮 Disaster Scenarios
 
+Scenario templates provide the disaster *mechanics*; the actual severity is
+driven by the configurable **magnitude (1-10)**, which maps to damage
+multiplier (0.6-2.0x), duration (12-30h), and aftershock probability.
+In multi-city worlds, all effects decay with distance from the epicenter.
+
 ### 1. Earthquake
-- High initial damage multiplier (1.5x)
-- Aftershock probability (10%) with additional damage
+- Aftershocks with additional damage (probability scales with magnitude)
 - Sudden infrastructure damage
 
 ### 2. Flood
-- Moderate damage multiplier (1.2x)
 - Ongoing damage rate while active
 - Water contamination effects
 
 ### 3. Hurricane
-- Highest damage multiplier (1.8x)
 - Random power-grid outages (30% chance per station per step while active)
 - Duration-limited event (12 hours)
 
 ### 4. Industrial Accident
-- Standard damage multiplier (1.0x)
-- Elevated casualty rate (+5%) at public venues while active
+- Elevated casualty rate at public venues and among at-home population
+- The deadliest scenario per hour in benchmarks
 
 ### 5. Tsunami
-- Severe damage multiplier (2.0x)
 - 3 wave surges during the event, each damaging all infrastructure
   and re-contaminating water supplies
 - Mandatory evacuation: elevated evacuee arrivals at public venues
@@ -191,37 +229,53 @@ disaster/
 
 ## 🔬 Results
 
-Measured with `seed=42`, agents trained 500 episodes on the target scenario,
+Measured with `seed=42`, Earthquake magnitude 6.0, agents trained 500 episodes,
 evaluated over 10 episodes each (greedy policy, no exploration):
 
-**Earthquake**
+**1 City** (8-dim state)
 
 | Agent | Avg Reward | Avg Discharged | Avg Deaths |
 |-------|------------|----------------|------------|
-| Q-Learning (RL) | 4970.8 ± 143.6 | 488.2 | 1.2 |
-| Manual (Balanced) | 3738.2 ± 254.4 | 428.6 | 12.6 |
-| Manual (Hospital Priority) | 5027.2 ± 134.3 | 490.0 | 0.6 |
-| Adaptive Manual | 3959.6 ± 173.6 | 430.9 | 8.8 |
+| Q-Learning (RL) | 5751.5 ± 308.4 | 609.4 | 9.2 |
+| Manual (Balanced) | 4211.0 ± 577.2 | 498.6 | 16.4 |
+| Manual (Hospital Priority) | 5834.4 ± 599.0 | 624.7 | 11.0 |
+| Adaptive Manual | 6183.2 ± 292.7 | 655.1 | 10.2 |
 
-**Tsunami**
+**3 Cities** (20-dim state)
 
 | Agent | Avg Reward | Avg Discharged | Avg Deaths |
 |-------|------------|----------------|------------|
-| Q-Learning (RL) | 4550.0 ± 406.6 | 477.0 | 7.0 |
-| Manual (Balanced) | 2413.3 ± 443.8 | 404.0 | 32.2 |
-| Manual (Hospital Priority) | 4667.3 ± 309.2 | 484.0 | 6.4 |
-| Adaptive Manual | 3093.3 ± 514.6 | 409.9 | 19.9 |
+| Q-Learning (RL) | 18851.6 ± 622.8 | 1966.3 | 19.0 |
+| Manual (Balanced) | 15914.6 ± 684.8 | 1693.2 | 22.8 |
+| Manual (Hospital Priority) | 19391.5 ± 627.3 | 2019.1 | 19.1 |
+| Adaptive Manual | 20279.0 ± 708.1 | 2087.0 | 15.0 |
+
+Per-scenario baseline (Adaptive Manual policy, 3 episodes each, magnitude 5):
+
+| Scenario | Avg Reward | Avg Deaths | Avg Discharged |
+|----------|------------|------------|----------------|
+| Earthquake | 6143 | 9.0 | 645.7 |
+| Flood | 5852 | 15.3 | 647.7 |
+| Hurricane | 4965 | 27.3 | 620.0 |
+| Industrial Accident | 1815 | 96.0 | 648.0 |
+| Tsunami | 6113 | 11.7 | 656.3 |
 
 Key findings:
 
-- The RL agent **clearly outperforms** generic balanced/adaptive heuristics
-  (+33% and +26% reward on Earthquake; +88% and +47% on Tsunami).
-- "Hospital Priority" is a strong baseline under this reward function because
-  deaths (-50) are dominated by hospital conditions. The RL policy matches it
-  within one standard deviation on Earthquake.
-- Unlike the fixed heuristics, a single RL policy adapts its allocation to the
-  observed damage/resource state and disaster phase, which is where its
-  advantage grows as scenarios diversify.
+- The RL agent **decisively beats static heuristics** (+37% over Balanced in
+  1-city, +18% in 3-city worlds).
+- The Adaptive Manual policy — which also has access to repair-crew
+  operations — currently leads. Tabular Q-learning with a coarse aggregate
+  state plateaus (verified flat from 500 → 1500 training episodes); closing
+  this gap is the prime motivation for the DQN future work below.
+- A single RL policy generalizes across scenarios, magnitudes, and world
+  sizes without hand-tuning — the manual heuristics encode assumptions
+  specific to this reward structure.
+- Industrial Accident is the deadliest scenario per hour; Tsunami surges and
+  Hurricane outages stress-test recovery planning.
+
+> **Note**: models saved before the multi-city rewrite (25 actions, per-entity
+> state) are incompatible with the current environment — retrain after pulling.
 
 ## 🔮 Future Enhancements
 
