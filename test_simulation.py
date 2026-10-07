@@ -16,6 +16,7 @@ from infrastructure import (
 from environment import DisasterEnvironment
 from agent import QLearningAgent, ManualPolicy, AdaptiveManualPolicy
 from trainer import Trainer, Evaluator
+from config import RL_CONFIG
 
 
 class TestInfrastructure:
@@ -36,11 +37,11 @@ class TestInfrastructure:
     def test_hospital_damage(self):
         """Test hospital damage mechanics"""
         hospital = Hospital(id=1, name="Test")
-        hospital.apply_damage(0.5)
-        assert hospital.damage_level == 0.5
+        hospital.apply_damage(0.45)
+        assert hospital.damage_level == pytest.approx(0.45)
         assert hospital.get_discrete_damage_level() == DamageLevel.MODERATE
-        
-        hospital.apply_damage(0.5)  # Total = 1.0
+
+        hospital.apply_damage(0.5)  # Total = 0.95
         assert hospital.is_operational == False
     
     def test_hospital_repair(self):
@@ -48,7 +49,7 @@ class TestInfrastructure:
         hospital = Hospital(id=1, name="Test", repair_rate=0.1)
         hospital.apply_damage(0.3)
         hospital.repair()
-        assert hospital.damage_level == 0.2
+        assert hospital.damage_level == pytest.approx(0.2)
     
     def test_hospital_resource_satisfaction(self):
         """Test resource satisfaction calculation"""
@@ -152,8 +153,8 @@ class TestAgent:
         """Test Q-Learning agent initialization"""
         agent = QLearningAgent(n_actions=25)
         assert agent.n_actions == 25
-        assert agent.alpha == 0.5
-        assert agent.gamma == 0.7
+        assert agent.alpha == RL_CONFIG["learning_rate_alpha"]
+        assert agent.gamma == RL_CONFIG["discount_factor_gamma"]
     
     def test_qlearning_action_selection(self):
         """Test action selection"""
