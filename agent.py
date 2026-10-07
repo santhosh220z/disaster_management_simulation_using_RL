@@ -3,6 +3,7 @@ Reinforcement Learning Agent for Disaster Management
 Implements Q-Learning with epsilon-greedy exploration
 """
 
+import ast
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
 from collections import defaultdict
@@ -10,7 +11,7 @@ import pickle
 import json
 from pathlib import Path
 
-from config import RL_CONFIG, ACTION_CONFIG
+from config import RL_CONFIG, ACTION_CONFIG, INFRASTRUCTURE_CONFIG
 
 
 class QLearningAgent:
@@ -216,8 +217,8 @@ class QLearningAgent:
         # Restore Q-table
         self.q_table = defaultdict(lambda: np.zeros(self.n_actions))
         for k, v in save_data["q_table"].items():
-            # Convert string key back to tuple
-            key = eval(k)
+            # Convert string key back to tuple (safe literal parsing)
+            key = ast.literal_eval(k)
             self.q_table[key] = np.array(v)
         
         self.alpha = save_data["alpha"]
@@ -288,25 +289,25 @@ class AdaptiveManualPolicy:
     
     def __init__(self):
         self.n_water_actions = len(ACTION_CONFIG["water_distribution_ratios"])
-    
+        self.n_hospitals = INFRASTRUCTURE_CONFIG["hospitals"]["count"]
+
     def get_action(self, state: Tuple, training: bool = False) -> int:
         """
         Get action based on current state
-        
+
         Adapts strategy based on observed damage levels
         """
         # Parse state to understand current situation
         # State format: [hospital1_damage, hospital1_resource, hospital2_damage, ...]
-        
+
         # Check if any hospital is in critical condition
         hospital_critical = False
-        for i in range(0, len(state), 2):
-            if i < 6:  # First 3 pairs are hospitals (assuming 3 hospitals)
-                damage_level = state[i]
-                resource_level = state[i + 1]
-                if damage_level >= 3 or resource_level <= 1:
-                    hospital_critical = True
-                    break
+        for i in range(0, self.n_hospitals * 2, 2):
+            damage_level = state[i]
+            resource_level = state[i + 1]
+            if damage_level >= 3 or resource_level <= 1:
+                hospital_critical = True
+                break
         
         if hospital_critical:
             # Emergency mode: prioritize hospitals
