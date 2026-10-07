@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from infrastructure import Hospital, PowerStation, WaterStation, PublicVenue
-from config import GENERATION_CONFIG, DISASTER_SCENARIOS
+from config import GENERATION_CONFIG, DISASTER_SCENARIOS, OPS_CONFIG
 
 
 @dataclass
@@ -135,6 +135,7 @@ def generate_world(config: WorldConfig) -> List[City]:
                 water_requirement=float(rng.uniform(*gen["hospital_water_req_range"]) * scale),
                 power_requirement=float(rng.uniform(*gen["hospital_power_req_range"]) * scale),
                 discharge_rate_optimal=gen["hospital_discharge_rate"],
+                medical_stock=OPS_CONFIG["initial_medical_stock"],
             ))
 
         power_stations = []

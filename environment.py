@@ -136,6 +136,8 @@ class DisasterEnvironment:
             "water_output": [],
             "hospital_resources": [],
             "actions": [],
+            "total_population": [],
+            "sheltered_population": [],
         }
 
         # Disaster event
@@ -175,6 +177,9 @@ class DisasterEnvironment:
         self.total_water_generated = 0.0
         self.total_power_wasted = 0.0
         self.total_water_wasted = 0.0
+        self.patients_turned_away = 0
+        self.action_log: List[Dict] = []
+        self._initial_population = sum(c.population for c in self.cities)
 
     # ------------------------------------------------------------------
     # World setup
@@ -314,11 +319,35 @@ class DisasterEnvironment:
             op = self.n_ops - 1  # default: "none"
         return (electricity_action * self.n_water_actions + water_action) * self.n_ops + op
 
+    def describe_action(self, action: int) -> str:
+        """Human-readable description of what an action does right now"""
+        elec, water, op = self.decode_action(action)
+        er = ACTION_CONFIG["electricity_distribution_ratios"][elec]
+        wr = ACTION_CONFIG["water_distribution_ratios"][water]
+        op_name = OPS_CONFIG["operations"][op]
+        parts = [
+            f"Power {er[0]:.0%} hospitals / {er[1]:.0%} venues / {er[2]:.0%} reserve",
+            f"Water {wr[0]:.0%} hospitals / {wr[1]:.0%} venues",
+        ]
+        if op_name != "none":
+            target = self._most_damaged_city()
+            op_desc = {
+                "repair_power": f"Repair crews → power stations in {target.name}",
+                "repair_water": f"Repair crews → water stations in {target.name}",
+                "repair_hospitals": f"Repair crews → hospitals in {target.name}",
+                "evacuate": f"Evacuate people from {target.name}",
+                "send_aid": f"Send aid convoy to {target.name}",
+            }
+            parts.append(op_desc.get(op_name, op_name))
+        return " · ".join(parts)
+
     # ------------------------------------------------------------------
     # Simulation step
     # ------------------------------------------------------------------
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict]:
         """Execute one time step with the given action"""
+        pre_state = self.get_state_tuple()
+        action_description = self.describe_action(action)
         electricity_action, water_action, op = self.decode_action(action)
 
         elec_ratios = ACTION_CONFIG["electricity_distribution_ratios"][electricity_action]
@@ -360,10 +389,15 @@ class DisasterEnvironment:
             total_power_all += city_power
             total_water_all += city_water
 
-            # Compute allocation amounts
+            # Compute allocation amounts; road damage slows delivery
             distributable_power = city_power - water_station_power
+            base_delay = self.world_config.delivery_delay_steps
+            if base_delay <= 0:
+                effective_delay = 0
+            else:
+                effective_delay = max(1, int(np.ceil(base_delay * (1 + city.avg_damage()))))
             allocation = {
-                "due": self.time_step + self.world_config.delivery_delay_steps,
+                "due": self.time_step + effective_delay,
                 "city_id": city.id,
                 "hospital_power": distributable_power * elec_ratios[0],
                 "venue_power": distributable_power * elec_ratios[1],
@@ -400,8 +434,10 @@ class DisasterEnvironment:
 
             for hospital in city.hospitals:
                 result = hospital.simulate_step(contamination=avg_contamination)
-                # Scale patient inflow with city population
+                # Scale patient inflow with city population; overflow is turned away
                 extra = int(np.random.poisson(2 * pop_scale * (1 + city.avg_damage())))
+                overflow = max(0, hospital.current_patients + extra - hospital.bed_capacity)
+                self.patients_turned_away += overflow
                 hospital.current_patients = min(hospital.bed_capacity, hospital.current_patients + extra)
                 step_discharged += result["discharged"]
                 step_deaths += result["deceased"]
@@ -451,19 +487,19 @@ class DisasterEnvironment:
                     for infra in city.all_infrastructure():
                         infra.apply_damage(ongoing_damage * factor * np.random.random())
 
-            # Aftershocks (per city, splash-scaled)
+            # Aftershocks (per city, splash-scaled); they injure people too
             for city in self.cities:
                 prob = self.disaster.aftershock_probability * self._city_damage_factor(city)
                 if prob > 0 and np.random.random() < prob:
-                    self._apply_aftershock(city)
+                    step_deaths += self._apply_aftershock(city)
 
-            # Tsunami wave surges
+            # Tsunami wave surges; they injure people too
             if (
                 self.surge_interval_steps > 0
                 and self.surges_applied < self.scenario.get("wave_surges", 0)
                 and self.time_step >= (self.surges_applied + 1) * self.surge_interval_steps
             ):
-                self._apply_surge()
+                step_deaths += self._apply_surge()
                 self.surges_applied += 1
 
         # At-home population casualties and migration
@@ -495,6 +531,17 @@ class DisasterEnvironment:
         self.hours_elapsed = (self.time_step * SIMULATION_CONFIG["time_step_minutes"]) / 60
 
         self._update_history(reward, step_discharged, step_deaths, total_power_all, total_water_all, action)
+
+        # Decision log: what was done at this step and what it achieved
+        self.action_log.append({
+            "step": self.time_step,
+            "state": pre_state,
+            "action": action,
+            "description": action_description,
+            "reward": reward,
+            "discharged": step_discharged,
+            "deaths": step_deaths,
+        })
 
         done = self.time_step >= self.max_time_steps
 
@@ -538,8 +585,9 @@ class DisasterEnvironment:
         self.delivery_queue = remaining
 
     def _deliver_due_aid(self) -> int:
-        """Deliver due aid convoys; returns patients healed by medical kits"""
-        healed_total = 0
+        """Deliver due aid convoys: water joins the city pool, fuel refuels
+        power stations, medical kits replenish hospital supply stock.
+        Returns 0 (no instant healing — stock is consumed by discharges)."""
         remaining = []
         for convoy in self.aid_convoys:
             if convoy["due"] <= self.time_step:
@@ -547,29 +595,20 @@ class DisasterEnvironment:
                 self._aid_water_available[city.id] = (
                     self._aid_water_available.get(city.id, 0.0) + convoy["water"]
                 )
-                # Fuel resupply for the target city's power stations
                 for station in city.power_stations:
                     station.refuel(convoy.get("fuel", 0.0))
-                # Medical kits: each kit treats 0.2 patients (abstracted)
-                convoy_healed = 0
                 if city.hospitals:
-                    treatable = int(convoy["medical"] * 0.2)
-                    per_hospital = max(1, treatable // len(city.hospitals))
+                    per_hospital = convoy["medical"] / len(city.hospitals)
                     for h in city.hospitals:
-                        healed = min(per_hospital, h.current_patients)
-                        h.current_patients -= healed
-                        h.patients_discharged += healed
-                        convoy_healed += healed
-                healed_total += convoy_healed
+                        h.medical_stock += per_hospital
                 self.aid_delivered["convoys"] += 1
                 self.aid_delivered["water"] += convoy["water"]
                 self.aid_delivered["medical_kits"] += convoy["medical"]
                 self.aid_delivered["fuel"] += convoy.get("fuel", 0.0)
-                self.discharged_by_city[city.id] += convoy_healed
             else:
                 remaining.append(convoy)
         self.aid_convoys = remaining
-        return healed_total
+        return 0
 
     def _most_damaged_city(self) -> City:
         return max(self.cities, key=lambda c: c.avg_damage())
@@ -629,16 +668,21 @@ class DisasterEnvironment:
             venue.current_population += take
             accepted -= take
 
-    def _apply_aftershock(self, city: City):
-        """Apply aftershock damage to one city"""
+    def _apply_aftershock(self, city: City) -> int:
+        """Apply aftershock damage to one city; returns at-home deaths"""
         aftershock_damage = self.scenario.get("aftershock_damage", 0.2)
         for infra in city.all_infrastructure():
             if np.random.random() < 0.5:
                 infra.apply_damage(aftershock_damage * np.random.random())
+        return self._event_casualties(
+            city, aftershock_damage * OPS_CONFIG["aftershock_casualty_factor"]
+        )
 
-    def _apply_surge(self):
-        """Apply a tsunami surge: epicenter full damage, splash decay elsewhere"""
+    def _apply_surge(self) -> int:
+        """Apply a tsunami surge: epicenter full damage, splash decay elsewhere.
+        Returns at-home deaths across all cities."""
         surge_damage = self.scenario.get("surge_damage", 0.25)
+        deaths = 0
         for city in self.cities:
             factor = self._city_damage_factor(city)
             for infra in city.all_infrastructure():
@@ -646,6 +690,21 @@ class DisasterEnvironment:
             if self.scenario.get("water_contamination", False) and factor >= 0.5:
                 for station in city.water_stations:
                     station.contaminate(np.random.uniform(0.1, 0.3))
+            deaths += self._event_casualties(
+                city, surge_damage * factor * OPS_CONFIG["surge_casualty_factor"]
+            )
+        return deaths
+
+    def _event_casualties(self, city: City, probability: float) -> int:
+        """Immediate casualties among the at-home population from a disaster event"""
+        if city.at_home_population <= 0 or probability <= 0:
+            return 0
+        deaths = int(np.random.binomial(city.at_home_population, min(1.0, probability)))
+        city.at_home_population -= deaths
+        city.population -= deaths
+        self.deaths_by_cause["at_home"] += deaths
+        self.deaths_by_city[city.id] += deaths
+        return deaths
 
     def _apply_home_casualties(self) -> int:
         """Casualties among the at-home (non-sheltered) population.
@@ -731,6 +790,10 @@ class DisasterEnvironment:
         self.history["actions"].append(action)
         hospital_resources = [h.get_resource_satisfaction() for h in self.hospitals]
         self.history["hospital_resources"].append(np.mean(hospital_resources) if hospital_resources else 0.0)
+        self.history["total_population"].append(sum(c.population for c in self.cities))
+        self.history["sheltered_population"].append(
+            sum(v.current_population for v in self.public_venues)
+        )
 
     # ------------------------------------------------------------------
     # Reset / render / metrics
@@ -755,7 +818,6 @@ class DisasterEnvironment:
         self.total_deaths = 0
 
         self.delivery_queue = []
-        self._init_report_tracking()
         self.aid_convoys = []
         self._aid_water_available = {}
 
@@ -765,6 +827,7 @@ class DisasterEnvironment:
         self._apply_initial_damage()
         self._aid_water_available = {c.id: 0.0 for c in self.cities}
         self._prestock_resources()
+        self._init_report_tracking()
 
         self.disaster = self._make_disaster_event()
 
@@ -777,6 +840,8 @@ class DisasterEnvironment:
             "water_output": [],
             "hospital_resources": [],
             "actions": [],
+            "total_population": [],
+            "sheltered_population": [],
         }
 
         return self.get_state()
@@ -850,6 +915,8 @@ class DisasterEnvironment:
                 if city.water_stations else 0.0,
             })
 
+        current_population = sum(c.population for c in self.cities)
+
         return {
             "scenario": self.scenario_name,
             "magnitude": self.world_config.magnitude,
@@ -860,6 +927,18 @@ class DisasterEnvironment:
             "total_discharged": self.total_discharged,
             "total_deaths": self.total_deaths,
             "deaths_by_cause": dict(self.deaths_by_cause),
+            "population": {
+                "initial": self._initial_population,
+                "current": current_population,
+                "sheltered": sum(v.current_population for v in self.public_venues),
+                "at_home": sum(c.at_home_population for c in self.cities),
+                "survival_rate": (
+                    current_population / self._initial_population
+                    if self._initial_population > 0 else 0.0
+                ),
+            },
+            "patients_turned_away": self.patients_turned_away,
+            "action_log": self.action_log,
             "per_city": per_city,
             "evacuations_performed": self.evacuations_performed,
             "total_evacuated": self.total_evacuated,

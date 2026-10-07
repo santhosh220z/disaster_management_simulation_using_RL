@@ -83,6 +83,9 @@ class Hospital(Infrastructure):
     discharge_rate_optimal: float = 5.0
     patients_discharged: int = 0
     patients_deceased: int = 0
+    medical_stock: float = 350.0  # consumable supply kits (1 per discharge)
+    no_stock_discharge_factor: float = 0.3  # discharge rate multiplier without supplies
+    stock_restock_rate: float = 0.5  # passive per-step supply regeneration
     
     def get_resource_satisfaction(self) -> float:
         """Calculate how well resources are meeting requirements"""
@@ -119,12 +122,21 @@ class Hospital(Infrastructure):
         efficiency = self.get_efficiency()
         resource_level = self.get_resource_satisfaction()
 
-        # Calculate discharge rate based on efficiency and resources
-        effective_discharge_rate = self.discharge_rate_optimal * efficiency * resource_level
+        # Calculate discharge rate based on efficiency and resources;
+        # without a full kit per patient, treatment slows drastically
+        stock_factor = 1.0 if self.medical_stock >= 1.0 else self.no_stock_discharge_factor
+        effective_discharge_rate = (
+            self.discharge_rate_optimal * efficiency * resource_level * stock_factor
+        )
 
-        # Discharge patients (with some randomness)
+        # Discharge patients (with some randomness), consuming supplies
         discharged = int(np.random.poisson(effective_discharge_rate))
         discharged = min(discharged, self.current_patients)
+        self.medical_stock = max(0.0, self.medical_stock - discharged)
+
+        # Passive supply trickle (local pharmacy/production) — far below
+        # consumption under load, so stock still depletes without aid
+        self.medical_stock += self.stock_restock_rate
 
         # Deaths from poor conditions, worsened by overcrowding
         # (mortality rises sharply above 90% bed occupancy)

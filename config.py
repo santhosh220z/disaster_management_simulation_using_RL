@@ -122,7 +122,7 @@ OPS_CONFIG = {
     "repair_boost": 0.05,       # extra repair per crew per step
     "evacuation_batch": 100,    # people moved per evacuate operation
     "aid_water_units": 300,     # water delivered per aid convoy
-    "aid_medical_kits": 50,     # medical kits per convoy (1 kit treats 0.2 patients)
+    "aid_medical_kits": 100,    # medical kits per convoy (1 kit consumed per discharge)
     "aid_fuel_units": 0.3,      # fuel fraction restored per convoy per power station
     "migration_rate": 0.005,    # voluntary per-step migration out of heavily damaged cities
     "migration_damage_threshold": 0.4,
@@ -130,6 +130,9 @@ OPS_CONFIG = {
     "passive_refuel_rate": 0.008,    # below consumption (0.01): fuel is finite without aid
     "deprivation_damage": 0.005,     # damage per step to severely resource-starved facilities
     "deprivation_threshold": 0.2,    # satisfaction below this counts as starving
+    "surge_casualty_factor": 0.001,   # at-home casualty probability per unit surge damage
+    "aftershock_casualty_factor": 0.001,  # at-home casualty probability per unit aftershock damage
+    "initial_medical_stock": 350,    # medical kits each hospital starts with
 }
 
 # Disaster Scenarios
