@@ -58,9 +58,13 @@ class Infrastructure:
     def repair(self):
         """Repair infrastructure over time"""
         if self.damage_level > 0:
-            self.damage_level = max(0, self.damage_level - self.repair_rate)
-            if self.damage_level < 0.9:
-                self.is_operational = True
+            self.repair_amount(self.repair_rate)
+
+    def repair_amount(self, amount: float):
+        """Repair a specific amount of damage (e.g. repair crew deployment)"""
+        self.damage_level = max(0, self.damage_level - amount)
+        if self.damage_level < 0.9:
+            self.is_operational = True
     
     def get_efficiency(self) -> float:
         """Get operational efficiency based on damage"""
