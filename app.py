@@ -8,7 +8,10 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 from plotly.subplots import make_subplots
+
+pio.templates.default = "plotly_dark"
 import json
 from pathlib import Path
 
@@ -30,36 +33,39 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
+    .stApp { background-color: #0d1117; }
     .stMetric {
-        background-color: #f0f2f6;
-        padding: 10px 14px;
-        border-radius: 8px;
-        border: 1px solid #e0e3e9;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        background-color: #161b26;
+        padding: 12px 16px;
+        border-radius: 12px;
+        border: 1px solid #262f42;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.35);
     }
     .stMetric label, .stMetric [data-testid="stMetricValue"],
-    .stMetric [data-testid="stMetricLabel"], .stMetric [data-testid="stMetricDelta"],
-    div[data-testid="stMetric"] > div, div[data-testid="stMetric"] label {
-        color: #000000 !important;
+    .stMetric [data-testid="stMetricLabel"], .stMetric [data-testid="stMetricDelta"] {
+        color: #e8edf5 !important;
     }
     .city-card {
-        background-color: #f8f9fb;
-        border: 1px solid #e0e3e9;
-        border-radius: 10px;
+        background-color: #161b26;
+        border: 1px solid #262f42;
+        border-radius: 12px;
         padding: 14px 18px;
         margin-bottom: 8px;
     }
     .city-card h4 { margin: 0 0 4px 0; }
-    .city-card .muted { color: #6b7280; font-size: 0.85rem; }
+    .city-card .muted { color: #9aa7bd; font-size: 0.85rem; }
     .report-header {
-        background: linear-gradient(90deg, #1f3b57, #35618e);
-        color: white;
+        background: linear-gradient(90deg, #1d2b45, #2f4d7d);
+        border: 1px solid #31435f;
+        color: #e8edf5;
         padding: 14px 20px;
-        border-radius: 10px;
+        border-radius: 12px;
         margin-bottom: 12px;
     }
-    .report-header h3 { margin: 0; color: white; }
-    .report-header p { margin: 2px 0 0 0; color: #cfe0f0; font-size: 0.9rem; }
+    .report-header h3 { margin: 0; color: #e8edf5; }
+    .report-header p { margin: 2px 0 0 0; color: #b9c8de; font-size: 0.9rem; }
+    div[data-testid="stSidebar"] { background-color: #11151f; }
+    hr { border-color: #262f42; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -189,26 +195,23 @@ def main():
             float(RL_CONFIG["exploration_rate_epsilon"])
         )
 
-        st.divider()
-        mode = st.radio(
-            "Mode",
-            ["🎮 Interactive Simulation", "🏋️ Train Agent",
-             "📈 Evaluate & Compare", "🔍 Policy Inspector"]
-        )
-
     # Initialize session state
     for key, default in [("env", None), ("agent", None), ("history", []),
                          ("trained_agent", None)]:
         if key not in st.session_state:
             st.session_state[key] = default
 
-    if mode == "🎮 Interactive Simulation":
+    tab_sim, tab_train, tab_eval, tab_policy = st.tabs([
+        "🎮 Interactive Simulation", "🏋️ Train Agent",
+        "📈 Evaluate & Compare", "🔍 Policy Inspector",
+    ])
+    with tab_sim:
         run_interactive_simulation(config, agent_type, model_name)
-    elif mode == "🏋️ Train Agent":
+    with tab_train:
         run_training(config, n_episodes, learning_rate, discount_factor, epsilon)
-    elif mode == "📈 Evaluate & Compare":
+    with tab_eval:
         run_evaluation(config, agent_type, model_name)
-    elif mode == "🔍 Policy Inspector":
+    with tab_policy:
         run_policy_inspector(config, model_name)
 
 
@@ -647,7 +650,7 @@ def run_training(config: WorldConfig, n_episodes: int, alpha: float, gamma: floa
                     fig.add_trace(go.Scatter(x=df["Episode"], y=df["Discharged"],
                                              mode="lines", name="Discharged"), row=1, col=2)
                     fig.update_layout(height=300, showlegend=False)
-                    chart_placeholder.plotly_chart(fig, width="stretch")
+                    chart_placeholder.plotly_chart(fig, width="stretch", key="train_progress_chart")
 
             st.session_state.trained_agent = agent
             st.session_state.training_rewards = rewards
@@ -690,7 +693,7 @@ def run_evaluation(config: WorldConfig, agent_type: str, model_name: str):
         saved = list_saved_models()
         if saved:
             st.info("No in-session trained agent found — pick a saved model to evaluate.")
-            choice = st.selectbox("Saved model", saved)
+            choice = st.selectbox("Saved model", saved, key="eval_saved_model")
             if choice:
                 env_for_load = DisasterEnvironment(world_config=config, seed=42)
                 rl_agent = build_agent("Load trained model", env_for_load, choice)
@@ -728,11 +731,11 @@ def run_evaluation(config: WorldConfig, agent_type: str, model_name: str):
                 fig = px.bar(df, x="Agent", y="Avg Reward",
                              title="Average Reward Comparison",
                              color="Agent", error_y="Std Reward")
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(fig, width="stretch", key="eval_reward_bar")
             with col2:
                 fig = px.bar(df, x="Agent", y=["Avg Discharged", "Avg Deaths"],
                              title="Healthcare Outcomes", barmode="group")
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(fig, width="stretch", key="eval_outcomes_bar")
 
             winner = df.loc[df["Avg Reward"].idxmax(), "Agent"]
             st.success(f"🏆 Best Performing Agent: **{winner}**")
@@ -758,7 +761,7 @@ def run_policy_inspector(config: WorldConfig, model_name: str):
     if agent is None:
         saved = list_saved_models()
         if saved:
-            choice = st.selectbox("Saved model", saved)
+            choice = st.selectbox("Saved model", saved, key="policy_saved_model")
             if choice:
                 env_for_load = DisasterEnvironment(world_config=config, seed=42)
                 agent = build_agent("Load trained model", env_for_load, choice)
@@ -779,7 +782,7 @@ def run_policy_inspector(config: WorldConfig, model_name: str):
                      title="Actions taken during training",
                      labels={"x": "Action (Elec/Water/Op)", "y": "Count"})
         fig.update_layout(height=350)
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, width="stretch", key="insp_action_dist")
     else:
         st.info("No action distribution recorded (agent was loaded from disk).")
 
@@ -818,7 +821,7 @@ def run_policy_inspector(config: WorldConfig, model_name: str):
             yaxis_title="Average city damage",
             height=400,
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, width="stretch", key="insp_heatmap")
     else:
         st.info("No matching visited states for the heatmap grid. Train longer to populate it.")
 
