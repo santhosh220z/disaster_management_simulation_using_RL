@@ -27,14 +27,27 @@ class TrainingVisualizer:
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
         
-        # Style settings
-        plt.style.use('seaborn-v0_8-darkgrid')
+        # Style settings — dark operations-center theme
+        plt.style.use('dark_background')
+        plt.rcParams.update({
+            'figure.facecolor': '#0d1117',
+            'axes.facecolor': '#161b26',
+            'axes.edgecolor': '#3a465e',
+            'axes.labelcolor': '#e8edf5',
+            'xtick.color': '#9aa7bd',
+            'ytick.color': '#9aa7bd',
+            'text.color': '#e8edf5',
+            'grid.color': '#262f42',
+            'grid.alpha': 0.6,
+            'legend.facecolor': '#161b26',
+            'legend.edgecolor': '#3a465e',
+        })
         self.colors = {
-            'reward': '#2ecc71',
-            'discharged': '#3498db',
-            'deaths': '#e74c3c',
-            'epsilon': '#9b59b6',
-            'q_value': '#f39c12',
+            'reward': '#4ade80',
+            'discharged': '#5b8def',
+            'deaths': '#f87171',
+            'epsilon': '#c084fc',
+            'q_value': '#fbbf24',
         }
     
     def plot_training_history(
@@ -278,8 +291,21 @@ class SimulationVisualizer:
     
     def setup(self):
         """Setup the visualization figure"""
+        plt.style.use('dark_background')
+        plt.rcParams.update({
+            'figure.facecolor': '#0d1117',
+            'axes.facecolor': '#161b26',
+            'axes.edgecolor': '#3a465e',
+            'axes.labelcolor': '#e8edf5',
+            'xtick.color': '#9aa7bd',
+            'ytick.color': '#9aa7bd',
+            'text.color': '#e8edf5',
+            'grid.color': '#262f42',
+            'grid.alpha': 0.6,
+        })
         self.fig, self.axes = plt.subplots(2, 3, figsize=(16, 10))
-        self.fig.suptitle('Real-Time Disaster Simulation', fontsize=14, fontweight='bold')
+        self.fig.patch.set_facecolor('#0d1117')
+        self.fig.suptitle('Real-Time Disaster Simulation', fontsize=14, fontweight='bold', color='#e8edf5')
         self.initialized = True
         plt.ion()
     
